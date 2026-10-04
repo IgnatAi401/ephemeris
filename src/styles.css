@@ -217,55 +217,155 @@ body {
 .orbit-overlay {
   pointer-events: none;
 }
+.orbit-map-stage {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.orbit-map-stage:active {
+  cursor: grabbing;
+}
+
+/* Layer panel: the legend, each row a switch. */
 .orbit-key {
   position: absolute;
-  top: 16px;
-  left: 18px;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
   display: grid;
-  gap: 10px;
-  pointer-events: none;
+  gap: 6px;
+  width: 206px;
+  max-height: calc(100% - 24px);
+  padding: 4px;
+  overflow: auto;
+  border: 1px solid transparent;
+  border-radius: 12px;
   color: rgba(223, 218, 245, 0.78);
   font: 500 10px/1.5 var(--font-mono);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  transition: opacity 0.7s var(--ease-out);
+  cursor: auto;
+  scrollbar-width: thin;
+  transition:
+    opacity 0.7s var(--ease-out),
+    background-color 0.3s,
+    border-color 0.3s;
 }
-.orbit-map[data-focus='moon'] .orbit-key,
-.orbit-map[data-focus='deep'] .orbit-key {
-  opacity: 0.35;
+.orbit-key[data-open] {
+  border-color: var(--line);
+  background: rgba(10, 11, 20, 0.55);
+  backdrop-filter: blur(8px);
+}
+.orbit-map[data-focus='moon'] .orbit-key:not(:hover, :focus-within),
+.orbit-map[data-focus='deep'] .orbit-key:not(:hover, :focus-within) {
+  opacity: 0.45;
+}
+.orbit-key button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.orbit-key button:focus-visible {
+  outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
+  outline-offset: 1px;
+}
+.orbit-key-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  justify-self: start;
+  padding: 4px 6px;
+  border-radius: 8px;
+  color: var(--text-2) !important;
+}
+.orbit-key:not([data-open]) .orbit-key-toggle {
+  border: 1px solid var(--line) !important;
+  background: rgba(10, 11, 20, 0.6) !important;
+}
+.orbit-key-toggle:hover {
+  color: var(--text-1) !important;
+}
+.orbit-key-chevron {
+  transition: transform 0.25s var(--ease-out);
+}
+.orbit-key[data-open] .orbit-key-chevron {
+  transform: rotate(180deg);
+}
+.orbit-key kbd,
+.orbit-legend kbd {
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: rgba(170, 166, 196, 0.7);
+  font: 500 9px/14px var(--font-mono);
+}
+.orbit-key-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 4px 4px;
+}
+.orbit-key-body[hidden] {
+  display: none;
 }
 .orbit-key-title {
   display: block;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
   color: rgba(170, 166, 196, 0.6);
 }
 .orbit-key ul {
   display: grid;
-  gap: 1px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.orbit-key li {
+.orbit-key li button {
   display: flex;
   align-items: center;
   gap: 7px;
+  width: 100%;
+  padding: 1px 4px;
+  border-radius: 5px;
+  text-align: left;
+  transition:
+    opacity 0.25s,
+    background-color 0.2s;
+}
+.orbit-key li button:hover {
+  background: rgba(var(--glow-rgb), 0.12);
+}
+.orbit-key li button[data-off] {
+  opacity: 0.38;
 }
 .orbit-key li i {
-  width: 6px;
+  flex: 0 0 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--dot);
   box-shadow: 0 0 6px var(--dot);
 }
+/* Visual layers: a small switch light instead of a colour dot. */
+.orbit-key li i[data-visual] {
+  background: var(--signal);
+  box-shadow: 0 0 6px var(--signal);
+}
+.orbit-key li button[data-off] i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(223, 218, 245, 0.5);
+}
 .orbit-key li span {
   margin-left: auto;
-  padding-left: 12px;
+  padding-left: 10px;
   color: rgba(170, 166, 196, 0.7);
   font-variant-numeric: tabular-nums;
 }
 .orbit-key-source {
   margin: 0;
+  padding-left: 4px;
   color: rgba(170, 166, 196, 0.45);
   font-size: 9px;
 }
@@ -352,6 +452,115 @@ body {
     opacity: 0.35;
   }
 }
+.orbit-speeds {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.orbit-timeline .orbit-speeds button {
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 8px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.orbit-timeline .orbit-speeds button[aria-pressed='true'] {
+  background: rgba(var(--glow-rgb), 0.22);
+  color: var(--text-1);
+}
+.orbit-help-button {
+  flex: 0 0 30px;
+}
+@media (hover: none) {
+  .orbit-help-button,
+  .orbit-legend kbd,
+  .orbit-key kbd {
+    display: none !important;
+  }
+}
+
+/* Keyboard shortcuts dialog. */
+.orbit-help-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(3, 4, 10, 0.55);
+  backdrop-filter: blur(3px);
+}
+.orbit-help {
+  position: static;
+  width: min(100%, 420px);
+  margin: 0;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(16, 17, 27, 0.96);
+  box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.8);
+  color: var(--text-2);
+  font-size: 13px;
+}
+.orbit-help header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.orbit-help h2 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 500;
+}
+.orbit-help header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.orbit-help header button:hover {
+  background: rgba(var(--glow-rgb), 0.12);
+  color: var(--text-1);
+}
+.orbit-help dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.orbit-help dl > div {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 12px;
+  align-items: baseline;
+}
+.orbit-help dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.orbit-help dd {
+  margin: 0;
+}
+.orbit-help kbd {
+  min-width: 22px;
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  color: var(--text-1);
+  font: 500 11px/1.4 var(--font-mono);
+  text-align: center;
+}
 .orbit-tape {
   position: relative;
   flex: 1 1 auto;
@@ -401,7 +610,7 @@ body {
 
 .orbit-legend {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin: 12px 0 0;
   padding: 0;
@@ -414,7 +623,7 @@ body {
   width: 100%;
   min-width: 0;
   height: 100%;
-  padding: 14px 15px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface);
@@ -426,6 +635,9 @@ body {
   transition:
     border-color 0.5s var(--ease-out),
     background-color 0.5s var(--ease-out);
+}
+.orbit-legend button kbd {
+  margin-left: auto;
 }
 .orbit-legend li[data-focused] button {
   border-color: rgba(var(--glow-highlight-rgb), 0.42);
@@ -525,15 +737,21 @@ body {
     margin-left: auto;
   }
 }
-@container (max-width: 460px) {
-  .orbit-key li span,
-  .orbit-key-source {
-    display: none;
-  }
+/* Below this the freshness badge and the layer panel would meet. */
+@container (max-width: 760px) {
   .orbit-key {
     top: 46px;
-    left: 12px;
-    font-size: 9px;
+    max-height: calc(100% - 58px);
+  }
+}
+@container (max-width: 640px) {
+  .orbit-legend kbd {
+    display: none;
+  }
+}
+@container (max-width: 440px) {
+  .orbit-legend-icon {
+    display: none;
   }
 }
 /* Short screens (landscape phones, small windows): every row of the dock

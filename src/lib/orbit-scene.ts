@@ -1,4 +1,12 @@
-import { Geometry, Mesh, Program, Renderer, Texture, Triangle } from 'ogl';
+import {
+  Geometry,
+  Mesh,
+  Program,
+  Renderer,
+  RenderTarget,
+  Texture,
+  Triangle,
+} from 'ogl';
 import {
   CONSTELLATIONS,
   EARTH_RADIUS_KM,
@@ -23,12 +31,34 @@ import {
   vectorAt,
   type SpacecraftSnapshot,
 } from '@/lib/ephemeris';
+import {
+  basis,
+  earthCover,
+  makeCamera,
+  project,
+  zoomToFit,
+  type Camera,
+  type Vec3,
+} from '@/lib/scene-camera';
+import {
+  INSET_MOON,
+  blurFragment,
+  brightFragment,
+  compositeFragment,
+  fullscreenVertex,
+  pointFragment,
+  pointVertex,
+  skyFragment,
+  trailFragment,
+  trailVertex,
+} from '@/lib/scene-shaders';
 
-/** One frame of the orbit map. Distances are in Earth radii, angles in
+/** One frame of the orbit view. Distances are in Earth radii, angles in
  * radians, layer weights 0–1. */
 export type SceneView = {
   time: number;
-  /** Earth radii from the centre of the frame to its top edge. */
+  /** Earth radii from the centre of the frame to its edge, at Earth's
+   * distance (see lib/scene-camera.ts). */
   zoom: number;
   /** Camera latitude above the equator. */
   elevation: number;
@@ -37,7 +67,7 @@ export type SceneView = {
   azimuth: number;
   leo: number;
   gnss: number;
-  /** Meteor trails behind GNSS, Iridium and ORBCOMM satellites. */
+  /** Meteor trails behind GNSS, Iridium, ORBCOMM and the stations. */
   trails: number;
   receiver: number;
   /** The Moon's month-long path around Earth. */
@@ -50,6 +80,17 @@ export type SceneView = {
   lunar: number;
   /** 1 frames the Moon wherever it projects, overriding `zoom`. */
   fitMoon: number;
+  /** Per-group visibility (layer switches and the opening sequence), in
+   * CONSTELLATIONS order. */
+  groups: readonly number[];
+  /** Night-side city lights. */
+  lights: number;
+  /** The pulse on satellites launched in the last 30 days. */
+  recent: number;
+  /** The glow around the Starlink shells. */
+  halo: number;
+  /** Bloom strength; 0 skips the post-processing passes entirely. */
+  bloom: number;
 };
 export type SceneText = {
   sun: string;
@@ -64,7 +105,6 @@ export type SceneText = {
   phase: (percent: number, waxing: boolean) => string;
 };
 
-type Vec3 = [number, number, number];
 const dot = (a: readonly number[], b: readonly number[]) =>
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const hex = (color: string) =>
@@ -103,6 +143,7 @@ const TRAIL_SAMPLES = 40;
 const POINT_SIZE = CONSTELLATIONS.map(({ key }) => STYLE[key][0]);
 const TRAIL_SPAN = CONSTELLATIONS.map(({ key }) => STYLE[key][1]);
 const TRAIL_WIDTH = CONSTELLATIONS.map(({ key }) => STYLE[key][2]);
+const STARLINK = CONSTELLATIONS.findIndex(({ key }) => key === 'starlink');
 // Ground receivers spread in longitude, roughly 60° apart, so one always
 // faces the camera as Earth turns.
 const RECEIVERS = [
@@ -115,9 +156,6 @@ const RECEIVERS = [
 ];
 const MASK = (10 * Math.PI) / 180;
 const DAY_MS = 86400000;
-// Moon radius as a fraction of the lunar close-up lens, leaving room for the
-// orbiters' ~100 km altitude.
-const INSET_MOON = 0.74;
 const MOON_KM = 1737.4;
 // Sun–Earth collinear points, km from Earth along the Sun line.
 const L1_KM = 1.4915e6;
@@ -131,321 +169,6 @@ const BEAM = {
   beidou: 21,
   beidouHigh: 10,
 };
-
-const skyVertex = /* glsl */ `#version 300 es
-in vec2 position;
-void main() {
-  gl_Position = vec4(position, 0.0, 1.0);
-}
-`;
-
-// Earth, Moon, Sun glow and stars in one pass. Each body is ray-cast as a
-// sphere under an orthographic camera; Earth is lit by the real Sun and turned
-// to the real sidereal angle, so the terminator and the coastlines under it
-// match the chosen instant.
-const skyFragment = /* glsl */ `#version 300 es
-precision highp float;
-uniform vec2 uSize;
-uniform float uDpr;
-uniform vec2 uCenter;
-uniform float uScale;
-uniform vec3 uRight;
-uniform vec3 uUp;
-uniform vec3 uToward;
-uniform vec3 uSun;
-uniform float uGmst;
-uniform float uEarthR;
-uniform float uStarZoom;
-uniform sampler2D uLand;
-uniform float uLandReady;
-uniform vec3 uMoon;
-uniform vec3 uMoonLook;
-uniform mat3 uMoonFrame;
-uniform vec2 uSunGlow;
-uniform vec3 uInset;
-uniform float uInsetAlpha;
-out vec4 fragColor;
-
-#define PI 3.14159265359
-#define TAU 6.28318530718
-
-float hash(vec2 p) {
-  p = fract(p * vec2(123.34, 456.21));
-  p += dot(p, p + 45.32);
-  return fract(p.x * p.y);
-}
-float hash3(vec3 p) {
-  p = fract(p * 0.3183099 + 0.1) * 17.0;
-  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-float noise3(vec3 x) {
-  vec3 i = floor(x);
-  vec3 f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(
-    mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), f.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), f.x), f.y),
-    mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y),
-    f.z
-  );
-}
-float fbm(vec3 p) {
-  float sum = 0.0;
-  float amp = 0.5;
-  for (int i = 0; i < 5; i++) {
-    sum += amp * noise3(p);
-    p = p * 2.07 + vec3(1.7, 9.2, 3.1);
-    amp *= 0.5;
-  }
-  return sum;
-}
-float stars(vec2 p, float cell, float density, float r, float seed) {
-  vec2 id = floor(p / cell);
-  if (hash(id + seed) > density) return 0.0;
-  vec2 at = (id + 0.2 + 0.6 * vec2(hash(id + seed + 3.7), hash(id + seed + 9.1))) * cell;
-  float d = length(p - at);
-  float size = r * (0.6 + 0.8 * hash(id + seed + 5.3));
-  return exp(-d * d / (size * size)) * (0.3 + 0.7 * hash(id + seed + 7.9));
-}
-vec4 over(vec4 top, vec4 under) {
-  return vec4(top.rgb + under.rgb * (1.0 - top.a), top.a + under.a * (1.0 - top.a));
-}
-// A unit disc point to a world-space normal on the camera-facing hemisphere.
-vec3 sphereNormal(vec2 q) {
-  float z = sqrt(max(0.0, 1.0 - dot(q, q)));
-  return normalize(uRight * q.x + uUp * q.y + uToward * z);
-}
-float gridLine(float value, float spacing) {
-  float d = abs(fract(value / spacing + 0.5) - 0.5) * spacing;
-  return 1.0 - smoothstep(0.0, fwidth(value) * 1.3, d);
-}
-
-vec4 earth(vec2 p) {
-  float radius = uEarthR * uScale;
-  vec2 q = (p - uCenter) / radius * vec2(1.0, -1.0);
-  float r = length(q);
-  float aa = 1.0 / radius;
-  vec3 limb = normalize(uRight * q.x + uUp * q.y);
-  float sunSide = dot(limb, uSun);
-  float dusk = exp(-sunSide * sunSide * 10.0);
-  vec3 air = mix(vec3(0.3, 0.52, 1.0), vec3(1.0, 0.56, 0.36), dusk * 0.7);
-
-  // Scattered light around the limb, strongest on the day side.
-  float fall = max(radius * 0.07, 2.2);
-  float halo = exp(-max(r - 1.0, 0.0) * radius / fall) * smoothstep(1.0 - aa, 1.0 + aa, r);
-  vec4 glow = vec4(air * halo * (0.08 + 0.9 * smoothstep(-0.35, 0.45, sunSide)), 0.0);
-  glow.a = clamp(max(glow.r, max(glow.g, glow.b)), 0.0, 1.0);
-  if (r > 1.0 + aa) return glow;
-
-  vec3 n = sphereNormal(q);
-  float c = cos(uGmst);
-  float s = sin(uGmst);
-  vec3 e = vec3(c * n.x + s * n.y, -s * n.x + c * n.y, n.z);
-  float lon = atan(e.y, e.x);
-  float lat = asin(clamp(e.z, -1.0, 1.0));
-  vec2 uv = vec2(lon / TAU + 0.5, 0.5 + lat / PI);
-  // Take derivatives from whichever longitude parametrisation has no seam
-  // here, so mipmapping does not draw a line down the antimeridian.
-  float shifted = fract(uv.x + 0.5);
-  float dxu = abs(dFdx(uv.x)) < abs(dFdx(shifted)) ? dFdx(uv.x) : dFdx(shifted);
-  float dyu = abs(dFdy(uv.x)) < abs(dFdy(shifted)) ? dFdy(uv.x) : dFdy(shifted);
-  vec4 tex = textureGrad(uLand, uv, vec2(dxu, dFdx(uv.y)), vec2(dyu, dFdy(uv.y))) * uLandReady;
-  float land = tex.r;
-  float lines = tex.g;
-  float shelf = tex.b;
-
-  float alat = abs(lat) * 180.0 / PI;
-  float n1 = fbm(e * 3.2);
-  float n2 = fbm(e * 11.0 + 4.0);
-  vec3 forest = vec3(0.13, 0.27, 0.19);
-  vec3 grass = vec3(0.33, 0.39, 0.23);
-  vec3 desert = vec3(0.69, 0.57, 0.41);
-  vec3 tundra = vec3(0.42, 0.44, 0.41);
-  vec3 ice = vec3(0.9, 0.94, 1.0);
-  float dry = exp(-pow((alat - 23.0) / 10.0, 2.0)) * smoothstep(0.38, 0.62, n1 + 0.12);
-  vec3 ground = mix(forest, grass, smoothstep(0.3, 0.7, n1));
-  ground = mix(ground, desert, dry);
-  ground = mix(ground, tundra, smoothstep(48.0, 64.0, alat + n2 * 6.0));
-  ground = mix(ground, ice, smoothstep(63.0, 72.0, alat + n2 * 10.0));
-  ground *= 0.84 + 0.32 * n2;
-  vec3 ocean = mix(vec3(0.015, 0.06, 0.19), vec3(0.04, 0.2, 0.36), shelf * (1.0 - land) * 0.85);
-  ocean = mix(ocean, ice * 0.85, smoothstep(76.0, 82.0, alat + n2 * 6.0));
-  vec3 surface = mix(ocean, ground, land);
-
-  float mu = dot(n, uSun);
-  float day = smoothstep(-0.1, 0.22, mu);
-  vec3 lit = surface * (0.18 + 1.05 * pow(max(mu, 0.0), 0.8));
-  vec3 halfway = normalize(uSun + uToward);
-  lit += vec3(1.0, 0.9, 0.78) * pow(max(dot(n, halfway), 0.0), 70.0) * (1.0 - land) * 0.7;
-  // Night: coastlines and borders glow faintly, like a chart under a lamp.
-  vec3 dark = vec3(0.01, 0.016, 0.04) + surface * 0.05 + vec3(0.36, 0.42, 0.95) * lines * 0.3;
-  vec3 color = mix(dark, lit, day);
-  float grid = max(gridLine(lat * 180.0 / PI, 30.0), gridLine(lon * 180.0 / PI, 30.0));
-  color += vec3(0.55, 0.62, 1.0) * grid * mix(0.09, 0.035, day);
-  color += vec3(0.95, 0.42, 0.2) * exp(-mu * mu * 90.0) * 0.1;
-  // Looking through more air toward the limb.
-  float z = sqrt(max(0.0, 1.0 - r * r));
-  float rim = pow(1.0 - z, 2.4);
-  color = mix(color, air * (0.12 + 0.9 * day), rim * 0.65);
-
-  float alpha = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
-  return over(vec4(color * alpha, alpha), glow);
-}
-
-// A lit Moon disc at geom = (x, y, radius px); look = (edge blur px, opacity).
-vec4 moonDisc(vec2 p, vec3 geom, vec2 look) {
-  float radius = geom.z;
-  float blur = look.x;
-  vec2 q = (p - geom.xy) / radius * vec2(1.0, -1.0);
-  float r = length(q);
-  float soft = max(blur, 0.8) / radius;
-  if (r > 1.0 + soft * 2.0 + blur * 0.25) return vec4(0.0);
-  vec3 n = sphereNormal(q / max(r, 1.0));
-  vec3 local = uMoonFrame * n;
-  float maria = smoothstep(0.48, 0.62, fbm(local * 2.2 + 3.0));
-  float grain = fbm(local * 9.0);
-  vec3 albedo = mix(vec3(0.78, 0.77, 0.8), vec3(0.42, 0.42, 0.47), maria) * (0.82 + 0.3 * grain);
-  float mu = dot(n, uSun);
-  vec3 color = albedo * (smoothstep(-0.04, 0.12, mu) * (0.25 + 0.85 * max(mu, 0.0))) + albedo * 0.025;
-  float alpha = 1.0 - smoothstep(1.0 - soft, 1.0 + soft, r);
-  // As a backdrop the Moon is out of focus and haloed.
-  float halo = exp(-max(r - 1.0, 0.0) * 3.0) * blur / 14.0 * 0.35;
-  vec4 disc = vec4(color * alpha, alpha) * look.y;
-  return over(disc, vec4(vec3(0.75, 0.74, 0.86) * halo, halo) * look.y);
-}
-
-void main() {
-  vec2 p = vec2(gl_FragCoord.x, uSize.y * uDpr - gl_FragCoord.y) / uDpr;
-#ifdef INSET
-  // The lunar close-up: a dark lens with the Moon filling most of it.
-  float lens = 1.0 - smoothstep(uInset.z - 1.0, uInset.z + 0.5, length(p - uInset.xy));
-  vec4 inset = over(moonDisc(p, vec3(uInset.xy, uInset.z * ${INSET_MOON}), vec2(0.0, 1.0)), vec4(vec3(0.018, 0.02, 0.04) * lens, lens * 0.94));
-  fragColor = inset * uInsetAlpha;
-  return;
-#endif
-  // Stars drift outward a little as the camera pulls back.
-  vec2 sp = uCenter + (p - uCenter) * uStarZoom;
-  float light = stars(sp, 4.0, 0.05, 0.6, 0.0) * 0.6
-    + stars(sp, 9.0, 0.05, 0.8, 21.0) * 0.8
-    + stars(sp, 23.0, 0.08, 1.05, 57.0);
-  vec3 sky = vec3(0.82, 0.85, 1.0) * light * 0.5;
-  float diagonal = length(uSize);
-  float d = length(p - uSunGlow) / diagonal;
-  sky += vec3(1.0, 0.72, 0.42) * (0.34 * exp(-d * 6.5) + 0.12 * exp(-d * 2.2));
-  sky = 1.0 - exp(-sky * 1.15);
-  vec4 color = vec4(sky, clamp(max(sky.r, max(sky.g, sky.b)), 0.0, 1.0));
-
-  vec4 planet = earth(p);
-  vec4 satellite = moonDisc(p, uMoon, uMoonLook.xy);
-  if (uMoonLook.z > 0.5) color = over(satellite, over(planet, color));
-  else color = over(planet, over(satellite, color));
-  color.rgb += (hash(gl_FragCoord.xy) - 0.5) / 255.0;
-  fragColor = clamp(color, 0.0, 1.0);
-}
-`;
-
-// Orthographic projection shared by the satellites and their trails. Anything
-// behind the Earth disc (or inside an Earth drawn larger than life) is hidden.
-const projection = /* glsl */ `
-uniform vec2 uSize;
-uniform vec2 uCenter;
-uniform float uScale;
-uniform vec3 uRight;
-uniform vec3 uUp;
-uniform vec3 uToward;
-uniform float uEarthR;
-float hiddenBehindEarth(vec3 p) {
-  vec2 plane = vec2(dot(p, uRight), dot(p, uUp));
-  float r2 = uEarthR * uEarthR;
-  return (dot(p, uToward) < 0.0 && dot(plane, plane) < r2) || dot(p, p) < r2 ? 1.0 : 0.0;
-}
-vec4 project(vec3 p) {
-  vec2 px = uCenter + vec2(dot(p, uRight), -dot(p, uUp)) * uScale;
-  return vec4(px.x / uSize.x * 2.0 - 1.0, 1.0 - px.y / uSize.y * 2.0, 0.0, 1.0);
-}
-`;
-
-const pointVertex = /* glsl */ `#version 300 es
-in vec3 position;
-in float group;
-uniform float uDpr;
-uniform vec3 uSun;
-uniform float uAlpha[${GROUPS}];
-uniform vec3 uColor[${GROUPS}];
-uniform float uPointSize[${GROUPS}];
-uniform float uSizeScale;
-out vec4 vColor;
-${projection}
-void main() {
-  int g = int(group + 0.5);
-  gl_Position = project(position);
-  // Satellites inside Earth's shadow cylinder are in eclipse: dimmed.
-  float along = dot(position, uSun);
-  float eclipse = along < 0.0 && dot(position, position) - along * along < 1.0 ? 0.35 : 1.0;
-  float alpha = uAlpha[g] * (1.0 - hiddenBehindEarth(position));
-  // Starlink's shell in front of the planet reads as haze: keep the
-  // continents visible through it.
-  vec2 plane = vec2(dot(position, uRight), dot(position, uUp));
-  if (g == 0 && dot(plane, plane) < uEarthR * uEarthR) alpha *= 0.42;
-  vColor = vec4(uColor[g] * eclipse, alpha);
-  gl_PointSize = alpha > 0.0 ? uPointSize[g] * uSizeScale * uDpr : 0.0;
-}
-`;
-const pointFragment = /* glsl */ `#version 300 es
-precision highp float;
-in vec4 vColor;
-out vec4 fragColor;
-void main() {
-  float d = length(gl_PointCoord - 0.5) * 2.0;
-  float a = vColor.a * (1.0 - smoothstep(0.55, 1.0, d));
-  fragColor = vec4(vColor.rgb * a, a);
-}
-`;
-
-// Meteor trails: a screen-space ribbon along the arc each satellite has
-// just flown, widest and brightest at the satellite, thinning to nothing.
-const trailVertex = /* glsl */ `#version 300 es
-in vec3 position;
-in vec3 next;
-in float side;
-in float fade;
-in float group;
-uniform float uAlpha[${GROUPS}];
-uniform vec3 uColor[${GROUPS}];
-uniform float uWidth[${GROUPS}];
-out vec4 vColor;
-out float vHidden;
-out float vSide;
-${projection}
-vec2 toPx(vec3 p) {
-  return uCenter + vec2(dot(p, uRight), -dot(p, uUp)) * uScale;
-}
-void main() {
-  int g = int(group + 0.5);
-  vec2 here = toPx(position);
-  vec2 along = toPx(next) - here;
-  float length2 = dot(along, along);
-  along = length2 > 1e-8 ? along / sqrt(length2) : vec2(1.0, 0.0);
-  float width = uWidth[g] * mix(1.0, 0.18, fade);
-  vec2 px = here + vec2(-along.y, along.x) * side * width * 0.5;
-  gl_Position = vec4(px.x / uSize.x * 2.0 - 1.0, 1.0 - px.y / uSize.y * 2.0, 0.0, 1.0);
-  vHidden = hiddenBehindEarth(position);
-  vSide = side;
-  float head = pow(1.0 - fade, 5.0);
-  vColor = vec4(mix(uColor[g], vec3(1.0), head * 0.55), uAlpha[g] * pow(1.0 - fade, 1.7));
-}
-`;
-const trailFragment = /* glsl */ `#version 300 es
-precision highp float;
-in vec4 vColor;
-in float vHidden;
-in float vSide;
-out vec4 fragColor;
-void main() {
-  if (vHidden > 0.5) discard;
-  float a = vColor.a * (1.0 - smoothstep(0.25, 1.0, abs(vSide)));
-  fragColor = vec4(vColor.rgb * a, a);
-}
-`;
 
 /** Convex hull of 2D points (Andrew's monotone chain), counter-clockwise. */
 function convexHull(points: [number, number][]) {
@@ -485,89 +208,135 @@ export function createOrbitScene(
   if (!renderer.isWebgl2) throw new Error('WebGL 2 is unavailable');
   const gl = renderer.gl;
   gl.clearColor(0, 0, 0, 0);
-  const shared = () => ({
+  const cameraUniforms = () => ({
     uSize: { value: [1, 1] },
     uDpr: { value: 1 },
     uCenter: { value: [0, 0] },
-    uScale: { value: 1 },
+    uFocal: { value: 1 },
+    uCam: { value: [10, 0, 0] },
     uRight: { value: [0, 1, 0] },
     uUp: { value: [0, 0, 1] },
     uToward: { value: [1, 0, 0] },
+    uNear: { value: 0.05 },
     uSun: { value: [1, 0, 0] },
     uEarthR: { value: 1 },
   });
-  const land = new Texture(gl, {
-    image: new Uint8Array(4),
-    width: 1,
-    height: 1,
-    generateMipmaps: false,
-    minFilter: gl.LINEAR,
-  });
-  const sky = new Program(gl, {
-    vertex: skyVertex,
-    fragment: skyFragment,
+  const blank = () =>
+    new Texture(gl, {
+      image: new Uint8Array(4),
+      width: 1,
+      height: 1,
+      generateMipmaps: false,
+      minFilter: gl.LINEAR,
+    });
+  const land = blank();
+  const lights = blank();
+  const passOptions = {
     transparent: true,
     depthTest: false,
     depthWrite: false,
+  };
+  const sky = new Program(gl, {
+    vertex: fullscreenVertex,
+    fragment: skyFragment,
+    ...passOptions,
     uniforms: {
-      ...shared(),
+      ...cameraUniforms(),
       uGmst: { value: 0 },
-      uStarZoom: { value: 1 },
       uLand: { value: land },
       uLandReady: { value: 0 },
+      uLights: { value: lights },
+      uNight: { value: 0 },
       uMoon: { value: [0, 0, 1] },
       uMoonLook: { value: [0, 0, 0] },
       uMoonFrame: { value: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
-      uSunGlow: { value: [0, 0] },
     },
   });
   const inset = new Program(gl, {
-    vertex: skyVertex,
+    vertex: fullscreenVertex,
     fragment: skyFragment.replace(
       '#version 300 es\n',
       '#version 300 es\n#define INSET\n',
     ),
-    transparent: true,
-    depthTest: false,
-    depthWrite: false,
+    ...passOptions,
     uniforms: {
-      ...shared(),
+      ...cameraUniforms(),
       uMoonFrame: { value: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
       uInset: { value: [0, 0, 1] },
       uInsetAlpha: { value: 0 },
     },
   });
   const layerUniforms = () => ({
-    ...shared(),
+    ...cameraUniforms(),
     uAlpha: { value: Array.from({ length: GROUPS }, () => 0) },
     uColor: { value: COLORS },
   });
   const points = new Program(gl, {
     vertex: pointVertex,
     fragment: pointFragment,
-    transparent: true,
-    depthTest: false,
-    depthWrite: false,
+    ...passOptions,
     uniforms: {
       ...layerUniforms(),
       uPointSize: { value: POINT_SIZE },
       uSizeScale: { value: 1 },
+      uDistance: { value: 1 },
+      uRecent: { value: 0 },
+      uClock: { value: 0 },
+      uHalo: { value: 0 },
+      uHaloAlpha: { value: 0 },
     },
   });
   const trails = new Program(gl, {
     vertex: trailVertex,
     fragment: trailFragment,
-    transparent: true,
-    depthTest: false,
-    depthWrite: false,
+    ...passOptions,
     cullFace: false,
     uniforms: { ...layerUniforms(), uWidth: { value: TRAIL_WIDTH } },
   });
-  const skyMesh = new Mesh(gl, { geometry: new Triangle(gl), program: sky });
-  const insetMesh = new Mesh(gl, {
-    geometry: new Triangle(gl),
-    program: inset,
+  const triangle = new Triangle(gl);
+  const skyMesh = new Mesh(gl, { geometry: triangle, program: sky });
+  const insetMesh = new Mesh(gl, { geometry: triangle, program: inset });
+
+  // Bloom: the scene renders into `scene`; its bright parts are blurred at
+  // half resolution through `half` and `swap`, then composited to the canvas.
+  const target = (width = 1, height = 1) =>
+    new RenderTarget(gl, { width, height, depth: false });
+  const post = { scene: target(), half: target(), swap: target() };
+  const bright = new Program(gl, {
+    vertex: fullscreenVertex,
+    fragment: brightFragment,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      tMap: { value: post.scene.texture },
+      uTexel: { value: [1, 1] },
+      uThreshold: { value: 0.42 },
+    },
   });
+  const blur = new Program(gl, {
+    vertex: fullscreenVertex,
+    fragment: blurFragment,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: { tMap: { value: post.half.texture }, uStep: { value: [0, 0] } },
+  });
+  const composite = new Program(gl, {
+    vertex: fullscreenVertex,
+    fragment: compositeFragment,
+    ...passOptions,
+    uniforms: {
+      tScene: { value: post.scene.texture },
+      tBloom: { value: post.half.texture },
+      uStrength: { value: 0 },
+    },
+  });
+  const brightMesh = new Mesh(gl, { geometry: triangle, program: bright });
+  const blurMesh = new Mesh(gl, { geometry: triangle, program: blur });
+  const compositeMesh = new Mesh(gl, {
+    geometry: triangle,
+    program: composite,
+  });
+
   let craft: SpacecraftSnapshot | null = null;
   let pointMesh: Mesh | null = null;
   let trailMesh: Mesh | null = null;
@@ -576,11 +345,19 @@ export function createOrbitScene(
   let samples = new Float32Array(0);
   let nexts = new Float32Array(0);
   const trailSatellites: number[] = [];
+  let camera: Camera | null = null;
   const context = overlay.getContext('2d');
   // The spillover glow is painted here first, then revealed through a disc
-  // that grows out of Earth as the Earth–Moon view opens.
+  // that grows out of Earth as the Earth–Moon view opens. It is soft enough
+  // to paint at half a CSS pixel per pixel: a sixteenth of the work at 2×.
+  const HAZE_SCALE = 0.5;
   const hazeCanvas = document.createElement('canvas');
   const haze = hazeCanvas.getContext('2d');
+  // The cones are the costliest thing on screen and barely move at Earth–Moon
+  // scale, so they are repainted when the camera or layers change and
+  // otherwise at most ten times a second.
+  let hazeKey = '';
+  let hazeAt = Number.NEGATIVE_INFINITY;
   let size = { width: 1, height: 1, dpr: 1 };
   // The scene may be built before its overlay joins the page (lib/orbit-stage.ts).
   const font =
@@ -592,13 +369,24 @@ export function createOrbitScene(
     fleet = next;
     positions = new Float32Array(next.count * 3);
     const group = new Float32Array(next.count);
-    next.group.forEach((value, index) => (group[index] = value));
+    const shade = new Float32Array(next.count);
+    next.group.forEach((value, index) => {
+      group[index] = value;
+      // Starlink shells by inclination: 33–53° blue through 70° and 97.6°
+      // polar shells toward violet.
+      if (value === STARLINK) {
+        const inclination = (Math.acos(next.cosI[index]) * 180) / Math.PI;
+        shade[index] = Math.min(1, Math.max(0, (inclination - 43) / 50));
+      }
+    });
     pointMesh = new Mesh(gl, {
       mode: gl.POINTS,
       program: points,
       geometry: new Geometry(gl, {
         position: { size: 3, data: positions, usage: gl.DYNAMIC_DRAW },
         group: { size: 1, data: group },
+        recent: { size: 1, data: Float32Array.from(next.recent) },
+        shade: { size: 1, data: shade },
       }),
     });
     trailSatellites.length = 0;
@@ -640,15 +428,22 @@ export function createOrbitScene(
     });
   };
 
-  const setLand = (image: HTMLCanvasElement) => {
-    land.generateMipmaps = true;
-    land.minFilter = gl.LINEAR_MIPMAP_LINEAR;
-    land.image = image;
-    land.needsUpdate = true;
+  const upload = (
+    texture: Texture,
+    image: HTMLCanvasElement | HTMLImageElement,
+  ) => {
+    texture.generateMipmaps = true;
+    texture.minFilter = gl.LINEAR_MIPMAP_LINEAR;
+    texture.image = image;
+    texture.needsUpdate = true;
     // Upload now rather than on the first visible frame.
-    land.update();
+    texture.update();
+  };
+  const setLand = (image: HTMLCanvasElement) => {
+    upload(land, image);
     sky.uniforms.uLandReady.value = 1;
   };
+  const setLights = (image: HTMLImageElement) => upload(lights, image);
 
   const resize = (width: number, height: number, dpr: number) => {
     size = { width, height, dpr };
@@ -656,8 +451,13 @@ export function createOrbitScene(
     renderer.setSize(width, height);
     overlay.width = Math.round(width * dpr);
     overlay.height = Math.round(height * dpr);
-    hazeCanvas.width = overlay.width;
-    hazeCanvas.height = overlay.height;
+    hazeCanvas.width = Math.max(1, Math.round(width * HAZE_SCALE));
+    hazeCanvas.height = Math.max(1, Math.round(height * HAZE_SCALE));
+    const w = Math.max(1, Math.round(width * dpr));
+    const h = Math.max(1, Math.round(height * dpr));
+    post.scene.setSize(w, h);
+    post.half.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
+    post.swap.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
   };
 
   const render = (view: SceneView, clock: number, text: SceneText) => {
@@ -665,56 +465,40 @@ export function createOrbitScene(
     const { width, height, dpr } = size;
     const { time } = view;
     const sun = sunDirection(time) as Vec3;
-    const sunLongitude = Math.atan2(sun[1], sun[0]);
-    const phi = sunLongitude + view.azimuth;
-    const toward: Vec3 = [
-      Math.cos(view.elevation) * Math.cos(phi),
-      Math.cos(view.elevation) * Math.sin(phi),
-      Math.sin(view.elevation),
-    ];
-    const right: Vec3 = [-Math.sin(phi), Math.cos(phi), 0];
-    const up: Vec3 = [
-      toward[1] * right[2] - toward[2] * right[1],
-      toward[2] * right[0] - toward[0] * right[2],
-      toward[0] * right[1] - toward[1] * right[0],
-    ];
-    const center: [number, number] = [width / 2, height / 2];
-    const frameHalf = Math.min(width / 1.6, height) / 2;
+    const orientation = basis(
+      view.elevation,
+      Math.atan2(sun[1], sun[0]) + view.azimuth,
+    );
+    const { toward, right, up } = orientation;
     const moon = moonPosition(time);
     // Seen from the camera the Moon may project anywhere from beside Earth to
     // 64 Earth radii out; fitting it keeps the Earth–Moon view filled.
-    const fit = Math.max(
-      18,
-      (Math.abs(dot(moon, right)) * frameHalf) / (0.7 * width * 0.5),
-      (Math.abs(dot(moon, up)) * frameHalf) / (0.62 * height * 0.5),
-    );
+    const fit = zoomToFit(width, height, moon, orientation, 18);
     const zoom = Math.exp(
       Math.log(view.zoom) * (1 - view.fitMoon) + Math.log(fit) * view.fitMoon,
     );
-    const scale = frameHalf / zoom;
-    if (!Number.isFinite(scale) || scale <= 0) return;
+    if (!Number.isFinite(zoom) || zoom <= 0) return;
+    const cam = makeCamera(width, height, zoom, orientation);
+    camera = cam;
+    const { center, scale } = cam;
+    // Far out, Earth is drawn at least five pixels across.
     const earthR = Math.max(1, 5 / scale);
-    const screen = (p: readonly number[]): [number, number] => [
-      center[0] + dot(p, right) * scale,
-      center[1] - dot(p, up) * scale,
-    ];
-    const hidden = (p: readonly number[]) => {
-      const x = dot(p, right);
-      const y = dot(p, up);
-      return (
-        (dot(p, toward) < 0 && x * x + y * y < earthR * earthR) ||
-        dot(p, p) < earthR * earthR
-      );
+    const screen = (p: readonly number[]): [number, number] => {
+      const [x, y] = project(cam, p);
+      return [x, y];
     };
+    const hidden = (p: readonly number[]) => earthCover(cam, p, earthR) === 1;
     for (const program of [sky, inset, points, trails]) {
       const u = program.uniforms;
       u.uSize.value = [width, height];
       u.uDpr.value = dpr;
       u.uCenter.value = center;
-      u.uScale.value = scale;
+      u.uFocal.value = cam.focal;
+      u.uCam.value = cam.position;
       u.uRight.value = right;
       u.uUp.value = up;
       u.uToward.value = toward;
+      u.uNear.value = cam.near;
       u.uSun.value = sun;
       u.uEarthR.value = earthR;
     }
@@ -722,21 +506,25 @@ export function createOrbitScene(
     // The Moon: where it really is once the frame is wide enough, otherwise
     // pinned to the frame edge in its true direction as an out-of-focus
     // backdrop.
-    const [mx, my] = screen(moon);
+    const [mx, my, mz] = project(cam, moon);
     const margin = 34;
+    // Behind the camera, take its direction across the screen plane.
+    const [dx, dy] = Number.isFinite(mx)
+      ? [mx - center[0], my - center[1]]
+      : [dot(moon, right) * 1e4, -dot(moon, up) * 1e4];
     const reach = Math.max(
-      Math.abs(mx - center[0]) / (center[0] - margin),
-      Math.abs(my - center[1]) / (center[1] - margin),
+      Math.abs(dx) / (center[0] - margin),
+      Math.abs(dy) / (center[1] - margin),
     );
     const pinned = Math.min(1, Math.max(0, (reach - 1) / 1.4));
     const pull = reach > 1 ? 1 / reach : 1;
     const moonAt: [number, number] = [
-      center[0] + (mx - center[0]) * pull,
-      center[1] + (my - center[1]) * pull,
+      center[0] + dx * pull,
+      center[1] + dy * pull,
     ];
     const ease = pinned * pinned * (3 - 2 * pinned);
-    const moonRadius =
-      Math.max(MOON_RADIUS * scale, 6.5) * (1 - ease) + 24 * ease;
+    const trueRadius = mz > cam.near ? (MOON_RADIUS * cam.focal) / mz : 0;
+    const moonRadius = Math.max(trueRadius, 6.5) * (1 - ease) + 24 * ease;
     const toEarth = moon.map((value) => -value / Math.hypot(...moon)) as Vec3;
     const side = [-toEarth[1], toEarth[0], 0].map(
       (value) => value / Math.hypot(toEarth[0], toEarth[1]),
@@ -748,13 +536,9 @@ export function createOrbitScene(
     ];
     const u = sky.uniforms;
     u.uGmst.value = siderealAngle(time);
-    u.uStarZoom.value = Math.pow(zoom / 3.7, -0.06);
+    u.uNight.value = view.lights;
     u.uMoon.value = [moonAt[0], moonAt[1], moonRadius];
-    u.uMoonLook.value = [
-      ease * 10,
-      1 - ease * 0.45,
-      dot(moon, toward) > 0 ? 1 : 0,
-    ];
+    u.uMoonLook.value = [ease * 10, 1 - ease * 0.45, mz < cam.distance ? 1 : 0];
     // Rows of a mat3 in column-major order: world → Moon-fixed frame.
     u.uMoonFrame.value = [
       toEarth[0],
@@ -774,47 +558,49 @@ export function createOrbitScene(
     const lensWeight = view.lunar * (1 - ease) * (craft ? 1 : 0);
     inset.uniforms.uInset.value = [lensAt[0], lensAt[1], lens];
     inset.uniforms.uInsetAlpha.value = lensWeight;
-    const sunPlane = [dot(sun, right), -dot(sun, up)];
-    const sunLength = Math.hypot(sunPlane[0], sunPlane[1]) || 1;
-    const sunReach = Math.hypot(width, height) * 0.56;
-    u.uSunGlow.value = [
-      center[0] + (sunPlane[0] / sunLength) * sunReach,
-      center[1] + (sunPlane[1] / sunLength) * sunReach,
-    ];
 
-    const alpha = CONSTELLATIONS.map((_, index) =>
-      IS_LOW[index] ? view.leo : view.gnss,
-    );
     // Far out, the LEO shells collapse into the planet and would only smear it.
     const far = Math.min(1, Math.max(0, (zoom - 12) / 18));
-    points.uniforms.uAlpha.value = alpha.map(
-      (value, index) =>
-        value * (IS_LOW[index] ? 1 - far : 1) * (index === 0 ? 0.82 : 1),
+    points.uniforms.uAlpha.value = CONSTELLATIONS.map(
+      (_, index) =>
+        (IS_LOW[index] ? view.leo * (1 - far) : view.gnss) *
+        view.groups[index] *
+        (index === STARLINK ? 0.82 : 1),
     );
     points.uniforms.uSizeScale.value =
       1 + 0.25 * Math.min(1, Math.max(0, (3.7 - zoom) / 2.2)) - 0.2 * far;
-    trails.uniforms.uAlpha.value = CONSTELLATIONS.map((_, index) =>
-      TRAIL_SPAN[index] === 0
-        ? 0
-        : !IS_LOW[index]
-          ? view.trails * view.gnss * 0.9
-          : view.trails * view.leo * 0.75 * (1 - far),
+    points.uniforms.uDistance.value = cam.distance;
+    points.uniforms.uRecent.value = view.recent;
+    points.uniforms.uClock.value = clock % 1e6;
+    trails.uniforms.uAlpha.value = CONSTELLATIONS.map(
+      (_, index) =>
+        view.groups[index] *
+        (TRAIL_SPAN[index] === 0
+          ? 0
+          : !IS_LOW[index]
+            ? view.trails * view.gnss * 0.9
+            : view.trails * view.leo * 0.75 * (1 - far)),
     );
+    const haloAlpha =
+      view.halo * view.leo * view.groups[STARLINK] * (1 - far) * 0.05;
 
-    renderer.render({ scene: skyMesh });
+    const bloom = view.bloom > 0.01;
+    const into = bloom ? post.scene : undefined;
+    renderer.render({ scene: skyMesh, target: into });
     if (fleet && pointMesh && trailMesh) {
       propagate(fleet, time, positions);
       pointMesh.geometry.attributes.position.needsUpdate = true;
       if (view.trails > 0.01) {
         // Sample the arc behind each satellite; each vertex also gets the
         // next sample toward the tail so the ribbon can be widened on screen.
+        const current = fleet;
         trailSatellites.forEach((satellite, slot) => {
           const span =
-            period(fleet!, satellite) * TRAIL_SPAN[fleet!.group[satellite]];
+            period(current, satellite) * TRAIL_SPAN[current.group[satellite]];
           const base = slot * TRAIL_SAMPLES * 6;
           for (let k = 0; k < TRAIL_SAMPLES; k++) {
             positionAt(
-              fleet!,
+              current,
               satellite,
               time - (span * k) / (TRAIL_SAMPLES - 1),
               samples,
@@ -843,11 +629,37 @@ export function createOrbitScene(
         });
         trailMesh.geometry.attributes.position.needsUpdate = true;
         trailMesh.geometry.attributes.next.needsUpdate = true;
-        renderer.render({ scene: trailMesh, clear: false });
+        renderer.render({ scene: trailMesh, target: into, clear: false });
       }
-      renderer.render({ scene: pointMesh, clear: false });
+      if (haloAlpha > 0.001) {
+        points.uniforms.uHalo.value = 1;
+        points.uniforms.uHaloAlpha.value = haloAlpha;
+        renderer.render({ scene: pointMesh, target: into, clear: false });
+        points.uniforms.uHalo.value = 0;
+      }
+      renderer.render({ scene: pointMesh, target: into, clear: false });
     }
-    if (lensWeight > 0.01) renderer.render({ scene: insetMesh, clear: false });
+    if (lensWeight > 0.01)
+      renderer.render({ scene: insetMesh, target: into, clear: false });
+    if (bloom) {
+      const halfSize = [post.half.width, post.half.height];
+      bright.uniforms.uTexel.value = [
+        1 / post.scene.width,
+        1 / post.scene.height,
+      ];
+      renderer.render({ scene: brightMesh, target: post.half });
+      // Two blur rounds, the second twice as wide.
+      for (const spread of [1, 2]) {
+        blur.uniforms.tMap.value = post.half.texture;
+        blur.uniforms.uStep.value = [spread / halfSize[0], 0];
+        renderer.render({ scene: blurMesh, target: post.swap });
+        blur.uniforms.tMap.value = post.swap.texture;
+        blur.uniforms.uStep.value = [0, spread / halfSize[1]];
+        renderer.render({ scene: blurMesh, target: post.half });
+      }
+      composite.uniforms.uStrength.value = view.bloom;
+      renderer.render({ scene: compositeMesh });
+    }
 
     if (!context) return;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -860,7 +672,7 @@ export function createOrbitScene(
       opacity: number,
       align: CanvasTextAlign = 'left',
     ) => {
-      if (opacity <= 0.01) return;
+      if (opacity <= 0.01 || !Number.isFinite(x + y)) return;
       context.font = `500 10px ${font}`;
       const content = value.toUpperCase();
       // Keep every label inside the frame whatever its anchor.
@@ -900,31 +712,32 @@ export function createOrbitScene(
         if (shown <= 0.01) continue;
         const links = layer * Math.max(0, facing) ** 8;
         const [sx, sy] = screen(site);
+        if (!Number.isFinite(sx + sy)) continue;
         let tracked = 0;
         for (let index = 0; index < fleet.count; index++) {
-          if (
-            !IS_GNSS[fleet.group[index]] ||
-            elevation(site, positions, index * 3) < MASK
-          )
+          const group = fleet.group[index];
+          if (!IS_GNSS[group] || elevation(site, positions, index * 3) < MASK)
             continue;
           tracked++;
+          const visible = view.groups[group];
           const target = [
             positions[index * 3],
             positions[index * 3 + 1],
             positions[index * 3 + 2],
           ];
-          if (links <= 0.01 || hidden(target)) continue;
+          if (links * visible <= 0.01 || hidden(target)) continue;
           const [tx, ty] = screen(target);
-          if (!Number.isFinite(tx + ty + sx + sy)) continue;
-          const [r, g, b] = COLORS[fleet.group[index]];
+          if (!Number.isFinite(tx + ty)) continue;
+          const [r, g, b] = COLORS[group];
+          const strength = links * visible;
           const gradient = context.createLinearGradient(sx, sy, tx, ty);
           gradient.addColorStop(
             0,
-            `rgba(${r * 255}, ${g * 255}, ${b * 255}, ${0.03 * links})`,
+            `rgba(${r * 255}, ${g * 255}, ${b * 255}, ${0.03 * strength})`,
           );
           gradient.addColorStop(
             1,
-            `rgba(${r * 255}, ${g * 255}, ${b * 255}, ${0.3 * links})`,
+            `rgba(${r * 255}, ${g * 255}, ${b * 255}, ${0.3 * strength})`,
           );
           context.strokeStyle = gradient;
           context.beginPath();
@@ -981,12 +794,18 @@ export function createOrbitScene(
       context.strokeStyle = `rgba(200, 189, 255, ${0.35 * pathWeight})`;
       context.lineWidth = 1;
       context.beginPath();
+      let drawing = false;
       for (let step = 0; step <= 96; step++) {
         const [x, y] = screen(
           moonPosition(time + (step / 96 - 0.5) * 27.32 * DAY_MS),
         );
-        if (step) context.lineTo(x, y);
+        if (!Number.isFinite(x + y)) {
+          drawing = false;
+          continue;
+        }
+        if (drawing) context.lineTo(x, y);
         else context.moveTo(x, y);
+        drawing = true;
       }
       context.stroke();
       context.setLineDash([]);
@@ -1019,22 +838,28 @@ export function createOrbitScene(
       Math.min(1, Math.max(0, (zoom - 20) / 20)),
     );
 
-    // The Sun, always far off: a label where its glow meets the frame.
-    const sunGlow = u.uSunGlow.value as number[];
-    const sunDx = sunGlow[0] - center[0];
-    const sunDy = sunGlow[1] - center[1];
-    const sunPull =
+    // The Sun: a label where it is, or where its direction meets the frame.
+    const sunAhead = -dot(sun, toward);
+    const sunX = dot(sun, right);
+    const sunY = -dot(sun, up);
+    const sunDir =
+      sunAhead > 0.05
+        ? [(sunX / sunAhead) * cam.focal, (sunY / sunAhead) * cam.focal]
+        : [sunX * 1e4, sunY * 1e4];
+    const sunPull = Math.min(
+      1,
       1 /
-      Math.max(
-        Math.abs(sunDx) / (center[0] - 44),
-        Math.abs(sunDy) / (center[1] - 26),
-      );
+        Math.max(
+          Math.abs(sunDir[0]) / (center[0] - 44),
+          Math.abs(sunDir[1]) / (center[1] - 26),
+        ),
+    );
     label(
       `☉ ${text.sun}`,
-      center[0] + sunDx * sunPull,
-      center[1] + sunDy * sunPull,
+      center[0] + sunDir[0] * sunPull,
+      center[1] + sunDir[1] * sunPull,
       0.7,
-      sunDx < 0 ? 'left' : 'right',
+      sunDir[0] < 0 ? 'left' : 'right',
     );
 
     const rgba = (color: string, alpha: number) => {
@@ -1061,29 +886,26 @@ export function createOrbitScene(
     // stationed there with their last three weeks of halo orbit.
     if (view.deep > 0.01) {
       const weight = view.deep;
-      const along = [sunPlane[0] / sunLength, sunPlane[1] / sunLength];
-      const reachPx = Math.hypot(width, height);
-      context.setLineDash([2, 6]);
-      context.strokeStyle = `rgba(255, 214, 160, ${0.22 * weight})`;
-      context.lineWidth = 1;
-      context.beginPath();
-      context.moveTo(
-        center[0] - along[0] * reachPx,
-        center[1] - along[1] * reachPx,
-      );
-      context.lineTo(
-        center[0] + along[0] * reachPx,
-        center[1] + along[1] * reachPx,
-      );
-      context.stroke();
-      context.setLineDash([]);
-      for (const [distance, name, sign] of [
-        [L1_KM, text.l1, 1],
-        [L2_KM, text.l2, -1],
+      const l1 = screen(sun.map((value) => (value * L1_KM) / EARTH_RADIUS_KM));
+      const l2 = screen(sun.map((value) => (-value * L2_KM) / EARTH_RADIUS_KM));
+      if (Number.isFinite(l1[0] + l1[1] + l2[0] + l2[1])) {
+        const span = Math.hypot(l1[0] - l2[0], l1[1] - l2[1]) || 1;
+        const along = [(l1[0] - l2[0]) / span, (l1[1] - l2[1]) / span];
+        const reachPx = Math.hypot(width, height);
+        context.setLineDash([2, 6]);
+        context.strokeStyle = `rgba(255, 214, 160, ${0.22 * weight})`;
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(l2[0] - along[0] * reachPx, l2[1] - along[1] * reachPx);
+        context.lineTo(l1[0] + along[0] * reachPx, l1[1] + along[1] * reachPx);
+        context.stroke();
+        context.setLineDash([]);
+      }
+      for (const [[lx, ly], name] of [
+        [l1, text.l1],
+        [l2, text.l2],
       ] as const) {
-        const [lx, ly] = screen(
-          sun.map((value) => (sign * value * distance) / EARTH_RADIUS_KM),
-        );
+        if (!Number.isFinite(lx + ly)) continue;
         context.strokeStyle = `rgba(255, 224, 190, ${0.7 * weight})`;
         context.beginPath();
         context.moveTo(lx - 4, ly);
@@ -1107,7 +929,7 @@ export function createOrbitScene(
             const point = screen(
               sample.map((value) => value / EARTH_RADIUS_KM),
             );
-            if (previous) {
+            if (previous && Number.isFinite(point[0] + point[1])) {
               context.strokeStyle = rgba(
                 color,
                 0.55 * weight * (1 - step / 42),
@@ -1120,6 +942,7 @@ export function createOrbitScene(
             previous = point;
           }
           const [cx, cy] = screen(at.map((value) => value / EARTH_RADIUS_KM));
+          if (!Number.isFinite(cx + cy)) continue;
           dotAt(cx, cy, 2.6, color, weight);
           const km = Math.round(Math.hypot(at[0], at[1], at[2])).toLocaleString(
             'en-US',
@@ -1159,17 +982,33 @@ export function createOrbitScene(
       }
       context.clip('evenodd');
       context.globalCompositeOperation = 'lighter';
-      haze?.setTransform(1, 0, 0, 1, 0, 0);
-      haze?.clearRect(0, 0, hazeCanvas.width, hazeCanvas.height);
-      haze?.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (haze) haze.globalCompositeOperation = 'lighter';
-      const far = Math.hypot(width, height);
-      // Cone length in Earth radii: comfortably past the frame edge.
-      const reach = (far / scale) * 1.2;
+      const key = [
+        ...cam.position.map((value) => value.toFixed(3)),
+        width,
+        height,
+        view.spill.toFixed(3),
+        view.gnss.toFixed(3),
+        ...view.groups.map((value) => value.toFixed(2)),
+      ].join();
+      const repaint =
+        !!haze &&
+        (key !== hazeKey || clock === 0 || Math.abs(clock - hazeAt) > 100);
+      if (repaint) {
+        hazeKey = key;
+        hazeAt = clock;
+        haze.setTransform(1, 0, 0, 1, 0, 0);
+        haze.clearRect(0, 0, hazeCanvas.width, hazeCanvas.height);
+        haze.setTransform(HAZE_SCALE, 0, 0, HAZE_SCALE, 0, 0);
+        haze.globalCompositeOperation = 'lighter';
+      }
+      const diagonal = Math.hypot(width, height);
+      // Cone length in Earth radii: past the frame edge, but short of the
+      // camera so every rim point projects.
+      const coneLength = Math.min((diagonal / scale) * 1.2, cam.distance * 0.7);
       const beams: { from: [number, number]; color: string }[] = [];
       for (let index = 0; index < fleet.count; index++) {
         const group = fleet.group[index];
-        if (!IS_GNSS[group]) continue;
+        if (!IS_GNSS[group] || view.groups[group] < 0.01) continue;
         const p = [
           positions[index * 3],
           positions[index * 3 + 1],
@@ -1192,11 +1031,13 @@ export function createOrbitScene(
         );
         const color = CONSTELLATIONS[group].color;
         const apex = screen(p);
+        if (!Number.isFinite(apex[0] + apex[1])) continue;
         if (offAxis > limb && offAxis < beam) {
           reaching++;
           beams.push({ from: apex, color });
         }
-        // The cone's outline: apex plus the rim circle at `reach`, projected.
+        if (!repaint) continue;
+        // The cone's outline: apex plus the rim circle at `coneLength`.
         const axis = p.map((value) => -value / radius);
         const helper = Math.abs(axis[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
         const e1 = [
@@ -1211,8 +1052,8 @@ export function createOrbitScene(
           axis[2] * e1[0] - axis[0] * e1[2],
           axis[0] * e1[1] - axis[1] * e1[0],
         ];
-        const along = reach * Math.cos(beam);
-        const across = reach * Math.sin(beam);
+        const along = coneLength * Math.cos(beam);
+        const across = coneLength * Math.sin(beam);
         const rim = Array.from({ length: 24 }, (_, step) => {
           const angle = (step / 24) * Math.PI * 2;
           const [c, s] = [Math.cos(angle) * across, Math.sin(angle) * across];
@@ -1222,9 +1063,9 @@ export function createOrbitScene(
             ),
           );
         });
+        if (!haze || rim.some(([x, y]) => !Number.isFinite(x + y))) continue;
         // A projected cone is the convex hull of its apex and projected rim.
         const outline = convexHull([apex, ...rim]);
-        if (!haze) continue;
         haze.beginPath();
         outline.forEach(([x, y], step) =>
           step ? haze.lineTo(x, y) : haze.moveTo(x, y),
@@ -1236,13 +1077,13 @@ export function createOrbitScene(
           0,
           apex[0],
           apex[1],
-          far,
+          diagonal,
         );
         const toEarth = Math.hypot(center[0] - apex[0], center[1] - apex[1]);
         glow.addColorStop(0, rgba(color, 0));
         glow.addColorStop(
-          Math.min(0.9, toEarth / far + 0.02),
-          rgba(color, 0.009 * weight),
+          Math.min(0.9, toEarth / diagonal + 0.02),
+          rgba(color, 0.009 * weight * view.groups[group]),
         );
         glow.addColorStop(1, rgba(color, 0));
         haze.fillStyle = glow;
@@ -1252,7 +1093,7 @@ export function createOrbitScene(
       // radius follows the view weight on an ease-out curve, so the signal
       // spreads out from the planet on the way in and draws back into it on
       // the way out.
-      if (haze) {
+      if (haze && repaint) {
         const grow = 1 - (1 - Math.min(1, view.spill)) ** 3;
         const corner = Math.hypot(
           Math.max(center[0], width - center[0]),
@@ -1274,19 +1115,19 @@ export function createOrbitScene(
         haze.fillStyle = disc;
         haze.fillRect(0, 0, width, height);
         haze.globalCompositeOperation = 'source-over';
-        context.drawImage(hazeCanvas, 0, 0, width, height);
       }
+      if (haze) context.drawImage(hazeCanvas, 0, 0, width, height);
       // Beams: a narrow, tapering glow from each counted satellite through
       // the Moon, fading a little beyond it.
       for (const { from, color } of beams) {
-        const dx = moonAt[0] - from[0];
-        const dy = moonAt[1] - from[1];
-        const distance = Math.hypot(dx, dy);
-        if (distance < 1) continue;
-        const [ux, uy] = [dx / distance, dy / distance];
-        const length = distance * 1.25;
-        const half = Math.max(3, length * 0.02);
-        const tip = [from[0] + ux * length, from[1] + uy * length];
+        const bx = moonAt[0] - from[0];
+        const by = moonAt[1] - from[1];
+        const length = Math.hypot(bx, by);
+        if (length < 1) continue;
+        const [ux, uy] = [bx / length, by / length];
+        const reachLength = length * 1.25;
+        const half = Math.max(3, reachLength * 0.02);
+        const tip = [from[0] + ux * reachLength, from[1] + uy * reachLength];
         const light = context.createLinearGradient(
           from[0],
           from[1],
@@ -1310,7 +1151,7 @@ export function createOrbitScene(
     }
 
     // Lunar close-up: LRO and Danuri on their two-hour orbits, with a
-    // leader from the Moon itself.
+    // leader from the Moon itself. The lens keeps a flat (orthographic) view.
     if (craft && lensWeight > 0.01) {
       const k = (lens * INSET_MOON) / MOON_KM;
       const toLens = [lensAt[0] - moonAt[0], lensAt[1] - moonAt[1]];
@@ -1397,12 +1238,12 @@ export function createOrbitScene(
         label(text.lugre, width - 14, bottom, 0.55 * weight, 'right');
     }
 
-    // Scale bar on a 1–2–5 ladder.
+    // Scale bar on a 1–2–5 ladder, true at Earth's distance.
     const kmPerPx = EARTH_RADIUS_KM / scale;
-    const target = kmPerPx * 90;
-    const magnitude = 10 ** Math.floor(Math.log10(target));
+    const targetKm = kmPerPx * 90;
+    const magnitude = 10 ** Math.floor(Math.log10(targetKm));
     const step =
-      [1, 2, 5, 10].find((factor) => factor * magnitude >= target / 1.6)! *
+      [1, 2, 5, 10].find((factor) => factor * magnitude >= targetKm / 1.6)! *
       magnitude;
     const barPx = step / kmPerPx;
     const bx = width - 18 - barPx;
@@ -1429,11 +1270,16 @@ export function createOrbitScene(
   return {
     setFleet,
     setLand,
+    setLights,
     setSpacecraft(next: SpacecraftSnapshot) {
       craft = next;
     },
     resize,
     render,
+    /** The camera of the last frame, for picking. */
+    camera: () => camera,
+    /** Positions (Earth radii) of every satellite at the last frame. */
+    positions: () => positions,
     dispose() {
       canvas.removeEventListener('webglcontextlost', lost);
       gl.getExtension('WEBGL_lose_context')?.loseContext();
