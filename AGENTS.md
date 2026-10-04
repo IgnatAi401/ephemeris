@@ -10,9 +10,11 @@
 ## 目录
 
 - `src/main.tsx`、`src/app.tsx`、`src/styles.css`：入口、外壳和样式（`.orbit-*` 样式改编自主站 `app/globals.css`）。
-- `src/components/orbit-view.tsx`：全屏视图的 React 外壳（时钟、时间标尺拖动与惯性、三个专题镜头、图例）。
+- `src/components/orbit-view.tsx`：全屏视图的 React 外壳：模拟时钟（1×/60×/600×/3600×、回到现在）、时间标尺拖动与惯性、开场动画、四个尺度预设（近地 → 中高轨 → 地月 → 日地 L1/L2，加总览）、镜头拖动旋转/滚轮与双指缩放（带惯性）、键盘快捷键、图层权重的淡入淡出、Bloom 的性能降级。
+- `src/components/layer-panel.tsx`：图例兼图层开关（`src/lib/layers.ts` 定义开关和默认值）；`shortcut-help.tsx`：快捷键说明；`freshness.tsx`：“星历更新于 X 小时前”。
 - `src/components/fallback.tsx`：无 WebGL 2 时的海报（`public/poster.webp`）和提示；`?nowebgl` 可强制预览。
-- `src/lib/orbit-scene.ts`：ogl（WebGL 2）主场景；`SceneView` 中 0–1 的图层权重控制淡入淡出。
+- `src/lib/orbit-scene.ts`：ogl（WebGL 2）主场景和 2D 标注层；`SceneView` 中 0–1 的权重控制淡入淡出（每组可见度、城市灯光、新发射脉动、星链光晕、Bloom 强度）。
+- `src/lib/scene-camera.ts`：透视相机（视场 32°，`zoom` 仍表示“地球距离处画面半高对应的地球半径数”）、投影、地球遮挡判断；`src/lib/scene-shaders.ts`：全部 GLSL（天球星空与银河、地球与大气、卫星点与光晕、拖尾、Bloom 三个后期 pass）。
 - `src/lib/orbits.ts`：平均根数 + J2 长期项的快速推算（不是 SGP4）、太阳/月球/恒星时等。
 - `src/lib/ephemeris.ts`：Horizons 快照插值（Hermite / 二体）。
 - `src/lib/orbit-stage.ts`：后台加载数据和陆地纹理、构建场景、WebGL 上下文丢失后重建。
@@ -20,6 +22,8 @@
 - `src/lib/site.ts`：站点域名和数据来源列表（页脚用）。
 - `scripts/fetch-orbits.mjs`、`scripts/check-orbits.mjs`：抓取与离线校验。
 - `public/data/`：抓取产物，**不进 Git**，只随构建部署。
+- `public/textures/night-lights.webp`：NASA Black Marble 2016 夜光（来源与处理见同目录 `README.md`）。
+- 开发模式下 `window.__orbitScene()` 返回当前场景对象，便于在控制台计时或检查（生产构建不包含）。
 - `orbits.ts` 和 `ephemeris.ts` 会被 Node 脚本直接导入（类型剥离），只能用可擦除的 TS 语法，且不要引入其他模块。
 
 ## 命令
@@ -56,6 +60,12 @@
 - 抓取的数据不进 Git；`status/status.json` 是校验的基线，只由工作流更新（或本地确认后手动更新）。
 - `public/CNAME` 为 `orbit.ignat.ai`；页面顶部显示“星历更新于 X 小时前”（读 `status.json`），超过 3 天变为警告。
 - 本地验证构建：`pnpm build` 后 `pnpm preview`（同为 3001 端口，需先停开发服务器）。
+
+## 视觉与性能约定
+
+- 每帧的开销大头：天空着色器（逐像素，与画布像素数成正比）和地月视角的 GNSS 外溢波束锥（2D 画布，已降到半分辨率并限制为镜头/图层变化时或每 100 ms 重画）。新增效果前先在开发模式下用 `__orbitScene().render(...)` 加 `gl.finish()` 计时。
+- Bloom 只在非触屏设备默认开启；开启状态下前 2 秒帧时间中位数超过 25 ms 会自动关闭。
+- `prefers-reduced-motion`：跳过开场、关闭惯性和补间，时钟默认暂停在 1×。
 
 ## 约束
 

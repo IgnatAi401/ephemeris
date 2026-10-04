@@ -29,6 +29,7 @@ export type OrbitStage = {
 };
 
 const LAND_URL = '/maps/countries-50m.json';
+const LIGHTS_URL = '/textures/night-lights.webp';
 let built: OrbitStage | null = null;
 let pending: Promise<OrbitStage> | null = null;
 // Without WebGL 2 the view cannot be built at all; do not retry every visit.
@@ -104,6 +105,17 @@ async function paintLandHere() {
   );
 }
 
+/** The night-lights texture, or null: the scene works without it. */
+function loadLights() {
+  return new Promise<HTMLImageElement | null>((resolve) => {
+    const image = new Image();
+    image.decoding = 'async';
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = LIGHTS_URL;
+  });
+}
+
 async function build(): Promise<OrbitStage> {
   // The L1/L2 and lunar spacecraft are optional: the map works without them.
   const spacecraft = fetch('/data/spacecraft.json')
@@ -111,6 +123,7 @@ async function build(): Promise<OrbitStage> {
       response.ok ? (response.json() as Promise<SpacecraftSnapshot>) : null,
     )
     .catch(() => null);
+  const nightLights = loadLights();
   const land = paintLandInWorker().then((canvas) => canvas ?? paintLandHere());
   land.catch(() => {});
   const [{ createOrbitScene }, orbits] = await Promise.all([
@@ -144,8 +157,10 @@ async function build(): Promise<OrbitStage> {
   };
   const { canvas, scene } = create();
   await idle();
-  // Uploads the land texture now, not on the first visible frame.
+  // Uploads the textures now, not on the first visible frame.
   scene.setLand(landCanvas);
+  const lightsImage = await nightLights;
+  if (lightsImage) scene.setLights(lightsImage);
   const stage: OrbitStage = {
     canvas,
     overlay,
@@ -163,6 +178,7 @@ async function build(): Promise<OrbitStage> {
         stage.scene.dispose();
         const next = create();
         next.scene.setLand(landCanvas);
+        if (lightsImage) next.scene.setLights(lightsImage);
         target.replaceWith(next.canvas);
         stage.canvas = next.canvas;
         stage.scene = next.scene;

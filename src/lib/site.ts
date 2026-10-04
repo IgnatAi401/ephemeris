@@ -22,4 +22,10 @@ export const SOURCES = [
     en: 'land boundaries (via world-atlas)',
     via: 'https://github.com/topojson/world-atlas',
   },
+  {
+    name: 'NASA Earth Observatory',
+    href: 'https://earthobservatory.nasa.gov/features/NightLights',
+    zh: '夜间灯光（Black Marble）',
+    en: 'night lights (Black Marble)',
+  },
 ] as const;
