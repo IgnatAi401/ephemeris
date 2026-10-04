@@ -1,0 +1,8 @@
+{
+  "source": "https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-50m.json",
+  "sourceSha256": "04342cdc1e3016bcd7db1630de95684d67b79fe3c8c460321e87aef469502394",
+  "dataset": "Natural Earth 4.1.0, Admin 0, 1:50m; world-atlas 2.0.2",
+  "license": "Public domain",
+  "licenseUrl": "https://www.naturalearthdata.com/about/terms-of-use/",
+  "processing": "Spherical topology-preserving simplification retaining the most significant 16% of weighted vertices; all Hong Kong and Macao vertices, short arcs and at least five vertices per longer arc retained; quantized to 100000."
+}
