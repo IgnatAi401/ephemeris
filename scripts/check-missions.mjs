@@ -8,7 +8,10 @@ import { MISSIONS } from '../src/lib/missions.ts';
 //   pnpm check:missions
 const DIR = new URL('../public/missions/', import.meta.url);
 const MAX_BYTES = 300 * 1024;
+// Cassini's 294 Saturn orbits; loaded only when picked (~230 kB gzipped).
+const MAX_HELIO_BYTES = 600 * 1024;
 const EARTH_KM = 6378.137;
+const AU = 1.495978707e8;
 const problems = [];
 const fail = (id, message) => problems.push(`${id}: ${message}`);
 
@@ -18,8 +21,9 @@ for (const mission of MISSIONS) {
   let data;
   try {
     const { size } = await stat(file);
-    if (size > MAX_BYTES)
-      fail(id, `${Math.round(size / 1024)} kB, over ${MAX_BYTES / 1024} kB`);
+    const budget = mission.kind === 'helio' ? MAX_HELIO_BYTES : MAX_BYTES;
+    if (size > budget)
+      fail(id, `${Math.round(size / 1024)} kB, over ${budget / 1024} kB`);
     data = JSON.parse(await readFile(file, 'utf8'));
   } catch (error) {
     fail(id, `cannot read public/missions/${id}.json (${error.message})`);
@@ -40,9 +44,15 @@ for (const mission of MISSIONS) {
     for (let k = 0; k < t.length; k++) {
       const r = Math.hypot(s[k * 6], s[k * 6 + 1], s[k * 6 + 2]);
       const v = Math.hypot(s[k * 6 + 3], s[k * 6 + 4], s[k * 6 + 5]);
-      // Above the upper atmosphere, inside four times the L2 distance, and
-      // slower than Earth's escape speed at the surface.
-      if (!(r > EARTH_KM + 50 && r < 6e6 && v < 11.2)) {
+      // Around Earth: above the upper atmosphere, inside four times the L2
+      // distance, slower than escape speed at the surface. Around the Sun:
+      // outside 0.03 AU (Parker's record is 0.041), inside 300 AU, slower
+      // than 250 km/s.
+      const sane =
+        mission.kind === 'helio'
+          ? r > 0.03 * AU && r < 300 * AU && v < 250
+          : r > EARTH_KM + 50 && r < 6e6 && v < 11.2;
+      if (!sane) {
         fail(
           id,
           `${key}: sample ${k} at ${Math.round(r)} km, ${v.toFixed(2)} km/s`,
@@ -54,10 +64,27 @@ for (const mission of MISSIONS) {
   const lead = data.craft[0];
   const first = data.start + lead.t[0] * 1000;
   const last = data.start + lead.t.at(-1) * 1000;
-  const moonEnd =
-    data.moon.start + (data.moon.s.length / 6 - 1) * data.moon.step * 1000;
-  if (data.moon.start > first || moonEnd < last)
-    fail(id, 'the Moon does not cover the whole trajectory');
+  if (mission.kind === 'helio') {
+    if (data.kind !== 'helio') fail(id, 'file is not heliocentric');
+    // Every body the phases look at or centre on is in the file, over the
+    // whole trajectory.
+    const keys = new Set(data.bodies.map((body) => body.key));
+    for (const phase of mission.phases)
+      for (const key of [phase.shot.body, phase.frame])
+        if (key && key !== 'sun' && !keys.has(key))
+          fail(id, `phase ${phase.en} needs ${key}, not in the file`);
+    for (const body of data.bodies) {
+      const from = data.start + body.t[0] * 1000;
+      const to = data.start + body.t.at(-1) * 1000;
+      if (from > first || to < last)
+        fail(id, `${body.key} does not cover the whole trajectory`);
+    }
+  } else {
+    const moonEnd =
+      data.moon.start + (data.moon.s.length / 6 - 1) * data.moon.step * 1000;
+    if (data.moon.start > first || moonEnd < last)
+      fail(id, 'the Moon does not cover the whole trajectory');
+  }
   let previous = -Infinity;
   for (const phase of mission.phases) {
     const from = Date.parse(phase.from);

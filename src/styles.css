@@ -894,6 +894,12 @@ body {
   background: var(--dot);
   box-shadow: 0 0 8px var(--dot);
 }
+.orbit-mission-group {
+  margin: 10px 2px 5px;
+  color: var(--text-3);
+  font: 500 10px/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+}
 .orbit-mission-list {
   display: grid;
   gap: 4px;

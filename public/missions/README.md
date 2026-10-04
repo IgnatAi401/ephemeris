@@ -15,7 +15,20 @@ unlike `public/data/`, these past trajectories do not change.
 - Spacecraft (Horizons IDs): Artemis II Orion −1024, Artemis I Orion −1023,
   Chandrayaan-3 lander −158 and propulsion module −169, JWST −170,
   CAPSTONE −1176; the Moon 301.
+- Interplanetary missions (heliocentric, ICRF, no precession): Voyager 2 −32,
+  Voyager 1 −31, New Horizons −98, Cassini −82, Parker Solar Probe −96,
+  Mars 2020 −168; bodies met: Venus 299, Earth 399, Mars 499, Jupiter 599,
+  Saturn 699, Uranus 799, Neptune 899, Pluto 999, Arrokoth 2486958. Near a
+  body the spacecraft is fetched relative to it and placed on the body's
+  heliocentric path, because Horizons' heliocentric and planetocentric
+  solutions for old spacecraft can disagree by thousands of km at a flyby.
+  Velocities are kept to 0.1 m/s.
+- Planets not met by a mission are placed with JPL's approximate mean
+  elements (E. M. Standish, Keplerian Elements for Approximate Positions of
+  the Major Planets, Table 1), in `src/lib/planets.ts`.
 
 Event times in `src/lib/missions.ts` come from NASA, ISRO and ESA mission
 timelines and were checked against these files (closest approaches, record
-distances and burns show in the vectors).
+distances and burns show in the vectors). Distances quoted for Parker are
+from the Sun's surface, as NASA gives them; the files measure from its
+centre.
