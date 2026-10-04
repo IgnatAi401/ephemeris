@@ -19,6 +19,16 @@ export const SHORTCUTS = [
   { keys: ['+', '−'], en: 'Zoom in / out', zh: '放大 / 缩小' },
   { keys: ['L'], en: 'Layers', zh: '图层面板' },
   { keys: ['?'], en: 'This help', zh: '快捷键说明' },
+  {
+    keys: ['1', '2', '3'],
+    en: 'Mission replay: whole path · Moon · spacecraft',
+    zh: '任务回放：全程 · 月球 · 飞行器',
+  },
+  {
+    keys: ['[', ']'],
+    en: 'Mission replay: previous / next event (0: guided view)',
+    zh: '任务回放：上一个 / 下一个事件（0：自动导览）',
+  },
 ] as const;
 
 /** A small dialog listing the keyboard shortcuts. Escape (handled with the

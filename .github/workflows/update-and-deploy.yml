@@ -56,6 +56,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm check:missions
       # The previous run's CelesTrak downloads: with them, a group is never
       # downloaded twice within two hours, even across manual runs.
       - uses: actions/cache@v6

@@ -458,3 +458,67 @@ void main() {
   fragColor = vec4(color, clamp(max(scene.a, max(bloom.r, max(bloom.g, bloom.b))), 0.0, 1.0));
 }
 `;
+
+// A replayed mission's path: a ribbon a couple of pixels wide through the
+// spacecraft's samples, stored in the reference frame's local coordinates
+// and placed with the frame's origin, axes and scale at the moment shown
+// (see lib/mission-track.ts). The flown part is bright, the rest faint;
+// whatever Earth or the Moon hides is dropped.
+export const pathVertex = /* glsl */ `#version 300 es
+in vec3 position;
+in vec3 next;
+in float side;
+in float time;
+uniform vec3 uOrigin;
+uniform mat3 uAxes;
+uniform float uScale;
+uniform float uNow;
+uniform vec3 uMoonAt;
+uniform float uMoonR;
+out float vFlown;
+out float vHidden;
+out float vSide;
+${camera}
+vec3 place(vec3 local) {
+  return uOrigin + uAxes * (local / uScale);
+}
+bool behindMoon(vec3 p) {
+  vec3 d = p - uCam;
+  float len = length(d);
+  d /= len;
+  vec3 o = uCam - uMoonAt;
+  float b = dot(o, d);
+  float disc = b * b - (dot(o, o) - uMoonR * uMoonR);
+  if (disc <= 0.0) return false;
+  float t = -b - sqrt(disc);
+  return t > 0.0 && t < len;
+}
+void main() {
+  vec3 p = place(position);
+  vec3 here = toScreen(p);
+  vec3 there = toScreen(place(next));
+  vec2 along = there.xy - here.xy;
+  float length2 = dot(along, along);
+  along = length2 > 1e-8 ? along / sqrt(length2) : vec2(1.0, 0.0);
+  vFlown = time <= uNow ? 1.0 : 0.0;
+  float width = mix(1.8, 2.8, vFlown);
+  gl_Position = clipFromPx(here.xy + vec2(-along.y, along.x) * side * width * 0.5);
+  float cover = earthCover(p);
+  vHidden = here.z < uNear || there.z < uNear || (cover > 0.5 && cover < 1.5) || behindMoon(p) ? 1.0 : 0.0;
+  vSide = side;
+}
+`;
+export const pathFragment = /* glsl */ `#version 300 es
+precision highp float;
+uniform vec3 uColor;
+uniform float uAlpha;
+in float vFlown;
+in float vHidden;
+in float vSide;
+out vec4 fragColor;
+void main() {
+  if (vHidden > 0.5) discard;
+  float a = uAlpha * mix(0.28, 0.92, vFlown) * (1.0 - smoothstep(0.3, 1.0, abs(vSide)));
+  fragColor = vec4(uColor * a, a);
+}
+`;

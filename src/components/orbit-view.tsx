@@ -14,6 +14,7 @@ import {
   Pause,
   Play,
   Radar,
+  Rocket,
   Satellite,
   Telescope,
 } from 'lucide-react';
@@ -27,12 +28,30 @@ import {
   type Fleet,
 } from '@/lib/orbits';
 import type {
+  MissionView,
   OrbitScene,
   SceneText,
   SceneView,
   Selection,
 } from '@/lib/orbit-scene';
 import { drawTape, TAPE_PX_PER_HOUR } from '@/lib/orbit-tape';
+import { drawMissionTape } from '@/lib/mission-tape';
+import {
+  fromLocal,
+  loadMissionTrack,
+  type MissionTrack,
+} from '@/lib/mission-track';
+import {
+  missionById,
+  type FrameId,
+  type Mission,
+  type Shot,
+} from '@/lib/missions';
+import {
+  MissionPanel,
+  tPlus,
+  type Telemetry,
+} from '@/components/mission-panel';
 import {
   loadOrbitStage,
   orbitStageUnsupported,
@@ -65,7 +84,7 @@ import {
   ORBIT_TYPES,
   type OrbitTypeId,
 } from '@/lib/orbit-types';
-import { frameHalf } from '@/lib/scene-camera';
+import { basis, focalLength, frameHalf } from '@/lib/scene-camera';
 
 type Preset = 'leo' | 'gnss' | 'moon' | 'deep';
 type Focus = Preset | 'overview';
@@ -84,6 +103,8 @@ type Pose = Omit<
   | 'insetRight'
   | 'focus'
   | 'example'
+  | 'mission'
+  | 'cameraAxes'
 >;
 
 const DEG = Math.PI / 180;
@@ -102,6 +123,11 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 0,
     fitMoon: 0,
+    aimMoon: 0,
+    aimCraft: 0,
+    aimX: 0,
+    aimY: 0,
+    aimZ: 0,
   },
   leo: {
     zoom: 1.35,
@@ -115,6 +141,11 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 0,
     fitMoon: 0,
+    aimMoon: 0,
+    aimCraft: 0,
+    aimX: 0,
+    aimY: 0,
+    aimZ: 0,
   },
   gnss: {
     zoom: 8.5,
@@ -128,6 +159,11 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 0,
     fitMoon: 0,
+    aimMoon: 0,
+    aimCraft: 0,
+    aimX: 0,
+    aimY: 0,
+    aimZ: 0,
   },
   moon: {
     zoom: 72,
@@ -141,6 +177,11 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 1,
     fitMoon: 1,
+    aimMoon: 0,
+    aimCraft: 0,
+    aimX: 0,
+    aimY: 0,
+    aimZ: 0,
   },
   deep: {
     zoom: 245,
@@ -154,6 +195,11 @@ const POSES: Record<Focus, Pose> = {
     deep: 1,
     lunar: 0,
     fitMoon: 0,
+    aimMoon: 0,
+    aimCraft: 0,
+    aimX: 0,
+    aimY: 0,
+    aimZ: 0,
   },
 };
 // The opening shot starts far out in deep space and pushes in to the overview.
@@ -191,6 +237,16 @@ const KEYS = Object.keys(POSES.overview) as (keyof Pose)[];
 const ZOOM_RANGE = [0.75, 600];
 const ELEVATION_LIMIT = 80 * DEG;
 const SPEEDS = [1, 60, 600, 3600];
+// Mission replays run from a minute to a day of flight per second.
+const MISSION_SPEEDS = [
+  { value: 60, en: '1 min/s', zh: '1分/秒' },
+  { value: 600, en: '10 min/s', zh: '10分/秒' },
+  { value: 3600, en: '1 h/s', zh: '1时/秒' },
+  { value: 21600, en: '6 h/s', zh: '6时/秒' },
+  { value: 86400, en: '1 d/s', zh: '1天/秒' },
+];
+// Closest the camera may come in a mission (the lunar landing).
+const MISSION_ZOOM_MIN = 0.3;
 const DEFAULT_SPEED = 60;
 const DAY = 86400000;
 const SPAN = 14 * DAY;
@@ -327,6 +383,52 @@ function transferPose(trip: ReturnType<typeof lunarTransfer>, time: number) {
   };
 }
 
+/** Unit eigenvector of the smallest eigenvalue of a symmetric 3×3 matrix
+ * (cyclic Jacobi rotations). */
+function thinnest(matrix: number[][]) {
+  const a = matrix.map((row) => [...row]);
+  const v = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+  for (let sweep = 0; sweep < 12; sweep++) {
+    for (const [p, q] of [
+      [0, 1],
+      [0, 2],
+      [1, 2],
+    ]) {
+      if (Math.abs(a[p][q]) < 1e-12) continue;
+      const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+      const t =
+        Math.sign(theta || 1) /
+        (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      const c = 1 / Math.sqrt(t * t + 1);
+      const s = t * c;
+      for (let k = 0; k < 3; k++) {
+        const [akp, akq] = [a[k][p], a[k][q]];
+        a[k][p] = c * akp - s * akq;
+        a[k][q] = s * akp + c * akq;
+      }
+      for (let k = 0; k < 3; k++) {
+        const [apk, aqk] = [a[p][k], a[q][k]];
+        a[p][k] = c * apk - s * aqk;
+        a[q][k] = s * apk + c * aqk;
+      }
+      for (let k = 0; k < 3; k++) {
+        const [vkp, vkq] = [v[k][p], v[k][q]];
+        v[k][p] = c * vkp - s * vkq;
+        v[k][q] = s * vkp + c * vkq;
+      }
+    }
+  }
+  const smallest = [0, 1, 2].reduce(
+    (best, k) => (a[k][k] < a[best][best] ? k : best),
+    0,
+  );
+  return [v[0][smallest], v[1][smallest], v[2][smallest]];
+}
+
 /** The live sky, full screen: every group propagated from a CelesTrak
  * snapshot under the real Sun and Moon, with presets that roam from low
  * orbit out to the Moon and the Sun–Earth L1/L2 points. */
@@ -362,7 +464,13 @@ export function OrbitView({
   // `live` is the "now" mode: real-time speed, pinned to the present until
   // the tape is moved or another speed is chosen.
   const clock = useRef({
-    sim: shared.time === undefined ? anchor : clamp(shared.time, anchor),
+    // A linked mission's instant is checked against the mission once loaded.
+    sim:
+      shared.time === undefined
+        ? anchor
+        : shared.mission && missionById(shared.mission)
+          ? shared.time
+          : clamp(shared.time, anchor),
     real: anchor,
     speed: DEFAULT_SPEED,
     // A linked instant opens paused, exactly as shared.
@@ -470,6 +578,54 @@ export function OrbitView({
   const example = useRef<SceneView['example']>(null);
   // The trip to the Moon shown for the transfer family, from when it was picked.
   const transfer = useRef<ReturnType<typeof lunarTransfer> | null>(null);
+  // --- Mission replay ---------------------------------------------------------
+  // While a mission replays, the clock runs over its span instead of ±14 days
+  // around now, and the tape's scale can be zoomed.
+  const bounds = useRef({ min: anchor - SPAN, max: anchor + SPAN });
+  const tapeScale = useRef(MS_PER_PX);
+  const [missionsOpen, setMissionsOpen] = useState(false);
+  const [mission, setMission] = useState<Mission | null>(null);
+  const [missionLoading, setMissionLoading] = useState<Mission['id'] | null>(
+    null,
+  );
+  const [missionFailed, setMissionFailed] = useState(false);
+  const [frame, setFrame] = useState<FrameId>('earth');
+  const [autopilot, setAutopilot] = useState(true);
+  const [shot, setShot] = useState<Shot['aim'] | null>(null);
+  const [phase, setPhase] = useState(0);
+  const [lastEvent, setLastEvent] = useState(-1);
+  // The replayed mission's span, ms.
+  const [missionSpan, setMissionSpan] = useState(0);
+  const missionRef = useRef<{
+    mission: Mission;
+    track: MissionTrack;
+    events: { time: number; label: string }[];
+    phases: number[];
+    frame: FrameId;
+    autopilot: boolean;
+    /** Phase and last event the frame loop has seen; -2 forces a refresh. */
+    phase: number;
+    event: number;
+    /** Fade of the mission drawing, 0–1. */
+    weight: number;
+  } | null>(null);
+  const telemetryRefs = useRef<Partial<Record<Telemetry, HTMLElement | null>>>(
+    {},
+  );
+  const telemetry = (key: Telemetry) => (element: HTMLElement | null) => {
+    telemetryRefs.current[key] = element;
+  };
+  const clampTime = (time: number) =>
+    Math.min(bounds.current.max, Math.max(bounds.current.min, time));
+  const setMissionAutopilot = (on: boolean) => {
+    const state = missionRef.current;
+    if (!state) return;
+    state.autopilot = on;
+    // Re-apply the current phase's shot and speed on the next frame.
+    if (on) state.phase = -2;
+    setAutopilot(on);
+    invalidate.current();
+  };
 
   useEffect(() => {
     text.current = sceneText(lang);
@@ -677,6 +833,10 @@ export function OrbitView({
       norad: selected?.norad ?? null,
       layers,
       defaults,
+      mission: missionRef.current && {
+        id: missionRef.current.mission.id,
+        frame: missionRef.current.frame,
+      },
     });
     window.history.replaceState(null, '', hash);
     const url = window.location.href;
@@ -729,7 +889,7 @@ export function OrbitView({
       real: Date.now(),
       ...next,
     };
-    clock.current.sim = clamp(clock.current.sim, anchor);
+    clock.current.sim = clampTime(clock.current.sim);
     setPlaying(clock.current.playing);
     setLive(clock.current.live);
     setSpeed(clock.current.speed);
@@ -749,7 +909,7 @@ export function OrbitView({
   // Enter or blur, anything else is dropped.
   const typedTime = (value: string) => {
     const time = parseUtc(value);
-    return time !== null && time === clamp(time, anchor) ? time : null;
+    return time !== null && time === clampTime(time) ? time : null;
   };
   const startEdit = () => {
     if (editing.current) return;
@@ -794,8 +954,12 @@ export function OrbitView({
   };
   const zoomBy = (factor: number) => {
     const pose = holdPose();
+    // A mission's camera may close in on the Moon; zooming takes over from
+    // its autopilot.
+    const replay = missionRef.current;
+    if (replay?.autopilot) setMissionAutopilot(false);
     pose.zoom = Math.max(
-      ZOOM_RANGE[0],
+      replay ? MISSION_ZOOM_MIN : ZOOM_RANGE[0],
       Math.min(ZOOM_RANGE[1], pose.zoom * factor),
     );
     invalidate.current();
@@ -804,6 +968,308 @@ export function OrbitView({
     intro.current.done = true;
     setFocus(next);
   };
+
+  // --- Mission replay: camera and controls ----------------------------------
+  /** Screen room the panels take: the side column on the right of a wide
+   * screen (a sheet above the dock on a narrow one) and the dock, px. */
+  const panelRoom = () => {
+    const wide = window.innerWidth > 760;
+    const column = (side.current?.offsetWidth ?? 300) + 12;
+    const sheet = side.current?.offsetHeight ?? 0;
+    const bar = dock.current?.offsetHeight ?? 120;
+    return wide
+      ? { right: column, bottom: bar }
+      : { right: 0, bottom: bar + sheet + 8 };
+  };
+  /** Zoom and aim (in the camera's axes) that frame every spacecraft's
+   * whole path, as drawn in the current frame, in the room the panels leave
+   * on screen, seen from the angles of `from`. */
+  const frameShot = (from: Pose) => {
+    const state = missionRef.current;
+    if (!state) return { zoom: POSES.overview.zoom, aim: [0, 0, 0] };
+    const { track, frame: id } = state;
+    const now = track.basis(id, simTime());
+    const { right, up } = basis(from.elevation, from.azimuth);
+    const point = [0, 0, 0];
+    let [left, top, rightmost, bottom] = [
+      Infinity,
+      -Infinity,
+      -Infinity,
+      Infinity,
+    ];
+    const shown: number[][] = [];
+    track.craft.forEach((_, index) => {
+      const path = track.localPath(index, id);
+      for (let at = 0; at < path.length; at += 3) {
+        fromLocal(now, path, at, point);
+        // Into the camera's axes, then across and up the screen.
+        const local = now.axes.map(
+          (axis) =>
+            axis[0] * point[0] + axis[1] * point[1] + axis[2] * point[2],
+        );
+        const x =
+          local[0] * right[0] + local[1] * right[1] + local[2] * right[2];
+        const y = local[0] * up[0] + local[1] * up[1] + local[2] * up[2];
+        shown.push(local);
+        left = Math.min(left, x);
+        rightmost = Math.max(rightmost, x);
+        bottom = Math.min(bottom, y);
+        top = Math.max(top, y);
+      }
+    });
+    const { innerWidth: width, innerHeight: height } = window;
+    const room = panelRoom();
+    const usableX = Math.max(160, width - room.right - 48) / 2;
+    const usableY = Math.max(120, height - room.bottom - 48) / 2;
+    const half = frameHalf(width, height);
+    const cx = (left + rightmost) / 2;
+    const cy = (top + bottom) / 2;
+    const middle = [0, 1, 2].map((axis) => cx * right[axis] + cy * up[axis]);
+    // Keep the camera well back from every point of the path, or the near
+    // end of a path running toward it is blown up by perspective.
+    const reach = Math.max(
+      ...shown.map((point) =>
+        Math.hypot(
+          point[0] - middle[0],
+          point[1] - middle[1],
+          point[2] - middle[2],
+        ),
+      ),
+    );
+    const zoom = Math.min(
+      ZOOM_RANGE[1],
+      Math.max(
+        1.2,
+        (((rightmost - left) / 2) * 1.12 * half) / usableX,
+        (((top - bottom) / 2) * 1.12 * half) / usableY,
+        (1.6 * reach * half) / focalLength(height),
+      ),
+    );
+    return { zoom, aim: middle };
+  };
+  /** A sensible width for looking at the Moon or the spacecraft now. */
+  const shotZoom = (aim: 'moon' | 'craft') => {
+    const state = missionRef.current;
+    if (!state) return POSES.overview.zoom;
+    const time = simTime();
+    const craft = [0, 0, 0];
+    const moon = state.track.moon(time, [0, 0, 0]);
+    const lead = state.track.craft.find((track) => track.at(time, craft));
+    if (!lead) return aim === 'moon' ? 6 : 4;
+    const fromMoon = Math.hypot(
+      craft[0] - moon[0],
+      craft[1] - moon[1],
+      craft[2] - moon[2],
+    );
+    if (aim === 'moon') return Math.min(30, Math.max(0.6, fromMoon * 1.7));
+    return fromMoon < 3 ? 1.2 : Math.hypot(...craft) < 4 ? 3 : 6;
+  };
+  /** The pose for a mission shot, keeping the camera's current angles:
+   * `zoom` a width, or 'fit' for the whole path. The aim is nudged so the
+   * subject sits in the middle of the room the panels leave. */
+  const shotPose = (
+    aim: Shot['aim'],
+    zoom: number | 'fit',
+    from: Pose,
+  ): Pose => {
+    const framed = zoom === 'fit' ? frameShot(from) : null;
+    const width = framed?.zoom ?? (zoom as number);
+    const { right, up } = basis(from.elevation, from.azimuth);
+    const room = panelRoom();
+    const perPx = width / frameHalf(window.innerWidth, window.innerHeight);
+    const shift = [0, 1, 2].map(
+      (axis) =>
+        (framed?.aim[axis] ?? 0) +
+        (right[axis] * room.right - up[axis] * room.bottom) * 0.5 * perPx,
+    );
+    return {
+      ...from,
+      leo: 0,
+      gnss: 0,
+      trails: 0,
+      receiver: 0,
+      moonPath: 0,
+      lunar: 0,
+      fitMoon: 0,
+      deep: missionRef.current?.mission.lagrange ?? 0,
+      aimMoon: aim === 'moon' ? 1 : 0,
+      aimCraft: aim === 'craft' ? 1 : 0,
+      aimX: shift[0],
+      aimY: shift[1],
+      aimZ: shift[2],
+      zoom: width,
+    };
+  };
+  /** Camera angles (in the frame's own axes) square to the lead
+   * spacecraft's path as drawn, tipped 25° for depth: the path's thinnest
+   * direction, from its spread weighted by length (a transfer that is
+   * nearly a straight line has no orbital plane to speak of, and a long
+   * stay in one place should not outweigh the trip there). */
+  const planeView = (track: MissionTrack, id: FrameId) => {
+    const path = track.localPath(0, id);
+    const segments: { middle: number[]; length: number }[] = [];
+    for (let at = 0; at + 5 < path.length; at += 3) {
+      const a = [path[at], path[at + 1], path[at + 2]];
+      const b = [path[at + 3], path[at + 4], path[at + 5]];
+      segments.push({
+        middle: [0, 1, 2].map((axis) => (a[axis] + b[axis]) / 2),
+        length: Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]),
+      });
+    }
+    const total = segments.reduce((sum, { length }) => sum + length, 0) || 1;
+    const mean = [0, 1, 2].map(
+      (axis) =>
+        segments.reduce(
+          (sum, { middle, length }) => sum + middle[axis] * length,
+          0,
+        ) / total,
+    );
+    const spread = [0, 1, 2].map((a) =>
+      [0, 1, 2].map((b) =>
+        segments.reduce(
+          (sum, { middle, length }) =>
+            sum + (middle[a] - mean[a]) * (middle[b] - mean[b]) * length,
+          0,
+        ),
+      ),
+    );
+    const [x, y, z] = thinnest(spread);
+    // Either side of the plane is face-on: look from the north.
+    const sign = z < 0 ? -1 : 1;
+    return {
+      elevation: Math.max(
+        -ELEVATION_LIMIT,
+        Math.min(ELEVATION_LIMIT, Math.asin(sign * z) - 25 * DEG),
+      ),
+      azimuth: Math.hypot(x, y) > 1e-6 ? Math.atan2(sign * y, sign * x) : 0,
+    };
+  };
+  const startMission = (next: Mission, at?: number, linkedFrame?: string) => {
+    setMissionLoading(next.id);
+    setMissionFailed(false);
+    loadMissionTrack(next.id).then(
+      (track) => {
+        setMissionLoading(null);
+        select(null);
+        closeLearn();
+        setPassesOpen(false);
+        const first =
+          next.frames.find((id) => id === linkedFrame) ?? next.frames[0];
+        // A shared link opens exactly as shared, without the autopilot.
+        const auto = !reducedMotion() && at === undefined;
+        missionRef.current = {
+          mission: next,
+          track,
+          events: next.events.map((event) => ({
+            time: Date.parse(event.at),
+            label: '',
+          })),
+          phases: next.phases.map((item) => Date.parse(item.from)),
+          frame: first,
+          autopilot: auto,
+          phase: -2,
+          event: -2,
+          weight: 0,
+        };
+        bounds.current = { min: track.start, max: track.stop };
+        tapeScale.current =
+          (track.stop - track.start) /
+          Math.max(200, tape.current?.clientWidth ?? 600);
+        setMission(next);
+        setMissionSpan(track.stop - track.start);
+        setFrame(first);
+        setAutopilot(auto);
+        setShot(next.phases[0].shot.aim);
+        setPhase(0);
+        setLastEvent(-1);
+        setClock({
+          sim: at === undefined ? track.start : clampTime(at),
+          speed: next.phases[0].speed,
+          playing: auto && at === undefined,
+          live: false,
+        });
+        // Cut to the whole path seen square-on; the first phase's shot then
+        // glides in from there.
+        intro.current.done = true;
+        spin.current = { azimuth: 0, elevation: 0, at: 0 };
+        tween.current = still(
+          shotPose('earth', 'fit', {
+            ...POSES.overview,
+            ...planeView(track, first),
+          }),
+        );
+        invalidate.current();
+      },
+      () => {
+        setMissionLoading(null);
+        setMissionFailed(true);
+      },
+    );
+  };
+  const exitMission = () => {
+    missionRef.current = null;
+    setMission(null);
+    bounds.current = { min: anchor - SPAN, max: anchor + SPAN };
+    tapeScale.current = MS_PER_PX;
+    backToNow();
+    tweenTo(POSES[focus], 1800);
+  };
+  /** Switch reference frame without turning the view: the camera keeps
+   * looking along the same line, re-measured in the new frame's axes. */
+  const changeFrame = (next: FrameId) => {
+    const state = missionRef.current;
+    if (!state || next === state.frame) return;
+    const time = simTime();
+    const pose = holdPose();
+    const before = state.track.basis(state.frame, time).axes;
+    const after = state.track.basis(next, time).axes;
+    const local = basis(pose.elevation, pose.azimuth).toward;
+    const world = [0, 1, 2].map(
+      (i) =>
+        local[0] * before[0][i] +
+        local[1] * before[1][i] +
+        local[2] * before[2][i],
+    );
+    const [x, y, z] = after.map(
+      (axis) => axis[0] * world[0] + axis[1] * world[1] + axis[2] * world[2],
+    );
+    pose.elevation = Math.max(
+      -ELEVATION_LIMIT,
+      Math.min(ELEVATION_LIMIT, Math.asin(Math.max(-1, Math.min(1, z)))),
+    );
+    pose.azimuth = Math.atan2(y, x);
+    state.frame = next;
+    setFrame(next);
+    invalidate.current();
+  };
+  const chooseShot = (aim: Shot['aim']) => {
+    if (!missionRef.current) return;
+    setMissionAutopilot(false);
+    setShot(aim);
+    tweenTo(
+      shotPose(aim, aim === 'earth' ? 'fit' : shotZoom(aim), holdPose()),
+      1400,
+    );
+  };
+  /** Jump to twenty minutes before an event, to watch it happen. */
+  const jumpToEvent = (index: number) => {
+    const state = missionRef.current;
+    const event = state?.events[index];
+    if (!state || !event) return;
+    setClock({ sim: event.time - 20 * 60000, live: false });
+  };
+
+  // A linked mission starts once the scene is ready, paused at the linked
+  // instant, in the linked frame.
+  const linkedMission = useRef(
+    shared.mission ? missionById(shared.mission) : null,
+  );
+  useEffect(() => {
+    const linked = linkedMission.current;
+    if (status !== 'ready' || !linked) return;
+    linkedMission.current = null;
+    startMission(linked, shared.time, shared.frame);
+  });
 
   useEffect(() => {
     // The opening tween is set up when the scene becomes ready.
@@ -957,9 +1423,8 @@ export function OrbitView({
     const state = drag.current;
     if (!state) return;
     const now = performance.now();
-    const sim = clamp(
-      state.sim - (event.clientX - state.x) * MS_PER_PX,
-      anchor,
+    const sim = clampTime(
+      state.sim - (event.clientX - state.x) * tapeScale.current,
     );
     const elapsed = Math.max(8, now - state.at);
     // Smoothed tape speed, in simulated ms per real ms, for the glide.
@@ -973,12 +1438,11 @@ export function OrbitView({
     const state = drag.current;
     if (!state) return;
     drag.current = null;
-    // A flick coasts at most about half a day (velocity × 320 ms decay).
-    const velocity = Math.max(
-      -GLIDE_LIMIT,
-      Math.min(GLIDE_LIMIT, state.velocity),
-    );
-    if (!reducedMotion() && Math.abs(velocity) > MS_PER_PX / 20)
+    // A flick coasts at most about 160 px of tape (velocity × 320 ms decay):
+    // half a day at the live scale.
+    const limit = (GLIDE_LIMIT * tapeScale.current) / MS_PER_PX;
+    const velocity = Math.max(-limit, Math.min(limit, state.velocity));
+    if (!reducedMotion() && Math.abs(velocity) > tapeScale.current / 20)
       glide.current = { velocity, at: performance.now(), resume: state.resume };
     else setClock({ playing: state.resume });
   };
@@ -1008,7 +1472,24 @@ export function OrbitView({
       // Keys typed into a field, or arrows on the time slider, stay there.
       if (target.closest('input, textarea, select, [contenteditable]')) return;
       const preset = '1234'.indexOf(event.key);
-      if (preset >= 0) go(PRESETS[preset]);
+      const replay = missionRef.current;
+      // In a mission, 1–3 are its camera shots, 0 its autopilot and [ ] step
+      // between events.
+      if (replay && preset >= 0 && preset < 3)
+        chooseShot((['earth', 'moon', 'craft'] as const)[preset]);
+      else if (replay && event.key === '0') setMissionAutopilot(true);
+      else if (replay && (event.key === '[' || event.key === ']')) {
+        const time = simTime();
+        const { events } = replay;
+        const index =
+          event.key === ']'
+            ? events.findIndex((item) => item.time - 20 * 60000 > time + 1000)
+            : events.findLastIndex(
+                (item) => item.time - 20 * 60000 < time - 60000,
+              );
+        if (index >= 0) jumpToEvent(index);
+      } else if (replay && preset >= 0) return;
+      else if (preset >= 0) go(PRESETS[preset]);
       else if (event.key === '0') go('overview');
       else if (event.key === ' ') {
         if (target.closest('button')) return;
@@ -1018,7 +1499,8 @@ export function OrbitView({
           (event.key === 'ArrowLeft' ? -1 : 1) *
             (event.shiftKey ? 6 * 3600000 : 600000),
         );
-      else if (event.key === 'n' || event.key === 'N') backToNow();
+      else if (event.key === 'n' || event.key === 'N')
+        (missionRef.current ? exitMission : backToNow)();
       else if (event.key === 'l' || event.key === 'L')
         setPanelOpen((open) => !open);
       else if (event.key === '+' || event.key === '=') zoomBy(1 / 1.25);
@@ -1026,6 +1508,7 @@ export function OrbitView({
       else if (event.key === '?') setHelp(true);
       else if (event.key === 'Escape') {
         if (learnOpen) closeLearn();
+        else if (missionsOpen && !missionRef.current) setMissionsOpen(false);
         else if (passesOpen) setPassesOpen(false);
         else if (selectedRef.current) select(null);
         else return;
@@ -1063,6 +1546,48 @@ export function OrbitView({
     // Bloom is dropped if the first frames are slow.
     const frameTimes: number[] = [];
     let bloomChecked = false;
+
+    /** The mission readouts: time since launch, heights and speed. */
+    const lead = [0, 0, 0];
+    const velocity = [0, 0, 0];
+    const lunar = [0, 0, 0];
+    const km = (value: number) =>
+      `${Math.round(Math.max(0, value)).toLocaleString('en-US')} km`;
+    const writeTelemetry = (
+      replay: NonNullable<typeof missionRef.current>,
+      time: number,
+    ) => {
+      const refs = telemetryRefs.current;
+      const language = text.current.zh ? 'zh' : 'en';
+      const write = (key: Telemetry, value: string) => {
+        const element = refs[key];
+        if (element && element.textContent !== value)
+          element.textContent = value;
+      };
+      write('tplus', tPlus(time, Date.parse(replay.mission.launch), language));
+      const flying = replay.track.craft.some((track) =>
+        track.at(time, lead, velocity),
+      );
+      if (!flying) {
+        for (const key of ['earth', 'moon', 'speed'] as const) write(key, '—');
+        return;
+      }
+      replay.track.moon(time, lunar);
+      write('earth', km((Math.hypot(...lead) - 1) * EARTH_RADIUS_KM));
+      write(
+        'moon',
+        km(
+          Math.hypot(
+            lead[0] - lunar[0],
+            lead[1] - lunar[1],
+            lead[2] - lunar[2],
+          ) *
+            EARTH_RADIUS_KM -
+            1737.4,
+        ),
+      );
+      write('speed', `${Math.hypot(...velocity).toFixed(2)} km/s`);
+    };
 
     const paint = (now: number) => {
       const dt = Math.min(100, now - previous);
@@ -1109,27 +1634,24 @@ export function OrbitView({
       if (coast) {
         const elapsed = Math.min(64, now - coast.at);
         coast.at = now;
-        const sim = clamp(clock.current.sim + coast.velocity * elapsed, anchor);
+        const sim = clampTime(clock.current.sim + coast.velocity * elapsed);
         coast.velocity =
           sim === clock.current.sim
             ? 0
             : coast.velocity * Math.exp(-elapsed / 320);
         clock.current = { ...clock.current, sim, real: Date.now() };
-        if (Math.abs(coast.velocity) < MS_PER_PX / 30) {
+        if (Math.abs(coast.velocity) < tapeScale.current / 30) {
           glide.current = null;
           clock.current = { ...clock.current, playing: coast.resume };
           setPlaying(coast.resume);
         }
       }
       let time = simTime();
-      if (clock.current.playing && time > anchor + SPAN) {
-        clock.current = {
-          ...clock.current,
-          sim: anchor + SPAN,
-          playing: false,
-        };
+      const end = bounds.current.max;
+      if (clock.current.playing && time > end) {
+        clock.current = { ...clock.current, sim: end, playing: false };
         setPlaying(false);
-        time = anchor + SPAN;
+        time = end;
       }
 
       // Layer weights: a fifth of a second to fade.
@@ -1147,25 +1669,94 @@ export function OrbitView({
         if (Math.abs(target - weights[key]) < 0.002) weights[key] = target;
         else settling = true;
       }
+      // Mission replay: each new phase steers the camera and the speed
+      // (unless the autopilot is off), and the drawing fades in. Today's
+      // satellites are hidden at once: their elements mean nothing in 2022.
+      const replay = missionRef.current;
+      let missionView: MissionView | null = null;
+      if (replay) {
+        const { mission: active, track } = replay;
+        let phaseIndex = 0;
+        replay.phases.forEach((from, index) => {
+          if (time >= from) phaseIndex = index;
+        });
+        if (phaseIndex !== replay.phase) {
+          const forced = replay.phase === -2;
+          replay.phase = phaseIndex;
+          setPhase(phaseIndex);
+          if (replay.autopilot) {
+            const step = active.phases[phaseIndex];
+            changeFrame(step.frame ?? active.frames[0]);
+            setShot(step.shot.aim);
+            tweenTo(
+              shotPose(
+                step.shot.aim,
+                step.shot.zoom,
+                poseAt(tween.current, now),
+              ),
+              forced ? 2400 : 1800,
+            );
+            if (
+              clock.current.playing &&
+              !drag.current &&
+              !glide.current &&
+              clock.current.speed !== step.speed
+            )
+              setClock({ speed: step.speed });
+          }
+        }
+        let eventIndex = -1;
+        replay.events.forEach((event, index) => {
+          if (time >= event.time) eventIndex = index;
+        });
+        if (eventIndex !== replay.event) {
+          replay.event = eventIndex;
+          setLastEvent(eventIndex);
+        }
+        replay.weight += (1 - replay.weight) * blend;
+        if (replay.weight > 0.998) replay.weight = 1;
+        else settling = true;
+        const zh = text.current.zh;
+        missionView = {
+          track,
+          frame: replay.frame,
+          weight: replay.weight,
+          craft: active.craft.map((item) => ({
+            label: zh ? item.zh : item.en,
+            color: item.color,
+          })),
+          events: active.events.map((item, index) => ({
+            time: replay.events[index].time,
+            label: zh ? item.zh : item.en,
+          })),
+        };
+      }
       const pose = poseAt(tween.current, now);
+      const live = !missionView;
       const view: SceneView = {
         time,
         ...pose,
-        trails: pose.trails * weights.trails * ramp(introAt, 0.7, 0.95),
-        receiver: pose.receiver * weights.receivers * ramp(introAt, 0.7, 0.95),
-        groups: GROUP_LAYER.map(
-          (id, index) => weights[id] * introGroup[index](introAt),
+        trails: live
+          ? pose.trails * weights.trails * ramp(introAt, 0.7, 0.95)
+          : 0,
+        receiver: live
+          ? pose.receiver * weights.receivers * ramp(introAt, 0.7, 0.95)
+          : 0,
+        groups: GROUP_LAYER.map((id, index) =>
+          live ? weights[id] * introGroup[index](introAt) : 0,
         ),
         lights: weights.lights * ramp(introAt, 0.15, 0.45),
-        recent: weights.highlight * ramp(introAt, 0.85, 1),
-        halo: weights.halo * ramp(introAt, 0.5, 0.75),
-        spill: weights.spill * ramp(introAt, 0.85, 1),
+        recent: live ? weights.highlight * ramp(introAt, 0.85, 1) : 0,
+        halo: live ? weights.halo * ramp(introAt, 0.5, 0.75) : 0,
+        spill: live ? weights.spill * ramp(introAt, 0.85, 1) : 0,
         bloom: weights.bloom * 0.9,
-        selected: selection.current,
-        hovered: hovered.current,
+        selected: live ? selection.current : null,
+        hovered: live ? hovered.current : null,
         insetRight: insetRight.current,
-        focus: focusWeight,
-        example: example.current,
+        focus: live ? focusWeight : 0,
+        example: live ? example.current : null,
+        mission: missionView,
+        cameraAxes: replay?.track.basis(replay.frame, time).axes,
       };
       scene?.render(view, reduced.matches ? 0 : now, text.current);
       // What is under the mouse, for the next frame: the scene picks from the
@@ -1208,16 +1799,31 @@ export function OrbitView({
       if (readout.current && document.activeElement !== readout.current)
         readout.current.value = `${utc(time)} UTC`;
       if (scrub.current && document.activeElement !== scrub.current)
-        scrub.current.value = String(Math.round((time - anchor) / 1000));
-      drawTape(rulerContext, {
-        ...rulerSize,
-        time,
-        now: Date.now(),
-        min: anchor - SPAN,
-        max: anchor + SPAN,
-        font,
-        nowLabel: text.current.now,
-      });
+        scrub.current.value = String(
+          Math.round((time - (replay?.track.start ?? anchor)) / 1000),
+        );
+      if (replay && missionView) {
+        drawMissionTape(rulerContext, {
+          ...rulerSize,
+          time,
+          min: bounds.current.min,
+          max: bounds.current.max,
+          msPerPx: tapeScale.current,
+          font,
+          color: replay.mission.color,
+          events: missionView.events,
+        });
+        writeTelemetry(replay, time);
+      } else
+        drawTape(rulerContext, {
+          ...rulerSize,
+          time,
+          now: Date.now(),
+          min: anchor - SPAN,
+          max: anchor + SPAN,
+          font,
+          nowLabel: text.current.now,
+        });
     };
     const loop = createFrameLoop(
       paint,
@@ -1262,7 +1868,10 @@ export function OrbitView({
     };
     // Development only: lets the browser console time and inspect the scene.
     if (import.meta.env.DEV)
-      Object.assign(window, { __orbitScene: () => sceneRef.current });
+      Object.assign(window, {
+        __orbitScene: () => sceneRef.current,
+        __mission: () => missionRef.current,
+      });
     const attach = (next: OrbitStage) => {
       if (disposed) return;
       attached = next;
@@ -1321,8 +1930,28 @@ export function OrbitView({
     if (side.current) observer.observe(side.current);
     if (dock.current) observer.observe(dock.current);
     observer.observe(ruler);
-    // Sideways trackpad swipes (or shift + wheel) scroll the tape.
+    // Sideways trackpad swipes (or shift + wheel) scroll the tape; in a
+    // mission the plain wheel zooms its scale, from ten seconds a pixel to
+    // the whole mission across the tape.
     const tapeWheel = (event: WheelEvent) => {
+      const replay = missionRef.current;
+      if (
+        replay &&
+        !event.shiftKey &&
+        Math.abs(event.deltaY) > Math.abs(event.deltaX)
+      ) {
+        event.preventDefault();
+        const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+        const widest =
+          (replay.track.stop - replay.track.start) /
+          Math.max(100, rulerSize.width * 0.45);
+        tapeScale.current = Math.min(
+          widest,
+          Math.max(10000, tapeScale.current * Math.exp(delta * 0.002)),
+        );
+        loop.invalidate();
+        return;
+      }
       const delta =
         Math.abs(event.deltaX) > Math.abs(event.deltaY)
           ? event.deltaX
@@ -1333,7 +1962,7 @@ export function OrbitView({
       event.preventDefault();
       clock.current = {
         ...clock.current,
-        sim: clamp(simTime() + delta * MS_PER_PX, anchor),
+        sim: clampTime(simTime() + delta * tapeScale.current),
         real: Date.now(),
         live: false,
       };
@@ -1405,6 +2034,7 @@ export function OrbitView({
     <div
       className="orbit-map"
       data-focus={focus}
+      data-mission={mission?.id}
       data-chrome={chromeHidden ? 'hidden' : undefined}
     >
       <div
@@ -1432,12 +2062,38 @@ export function OrbitView({
         />
         <Freshness lang={lang} />
         <div className="orbit-side" ref={side}>
-          <SearchBox
-            lang={lang}
-            catalog={catalog}
-            onOpen={() => void ensureCatalog()}
-            onPick={select}
-          />
+          {(missionsOpen || mission) && (
+            <MissionPanel
+              lang={lang}
+              mission={mission}
+              loading={missionLoading}
+              failed={missionFailed}
+              phase={phase}
+              event={lastEvent}
+              frame={frame}
+              autopilot={autopilot}
+              shot={shot}
+              telemetry={telemetry}
+              onPick={(next) => startMission(next)}
+              onExit={exitMission}
+              onClose={() => setMissionsOpen(false)}
+              onFrame={(id) => {
+                setMissionAutopilot(false);
+                changeFrame(id);
+              }}
+              onAutopilot={setMissionAutopilot}
+              onShot={chooseShot}
+              onEvent={jumpToEvent}
+            />
+          )}
+          {!mission && (
+            <SearchBox
+              lang={lang}
+              catalog={catalog}
+              onOpen={() => void ensureCatalog()}
+              onPick={select}
+            />
+          )}
           {selected && fleet && (
             <InfoCard
               lang={lang}
@@ -1505,31 +2161,57 @@ export function OrbitView({
             {playing ? <Pause size={15} /> : <Play size={15} />}
           </button>
           <div className="orbit-speeds">
-            {SPEEDS.map((value) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={!live && speed === value}
-                onClick={() =>
-                  setClock({ speed: value, live: false, playing: true })
-                }
-              >
-                {value}×
-              </button>
-            ))}
+            {mission
+              ? MISSION_SPEEDS.map(({ value, en, zh }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={speed === value}
+                    onClick={() => {
+                      setMissionAutopilot(false);
+                      setClock({ speed: value, live: false, playing: true });
+                    }}
+                  >
+                    {t(en, zh)}
+                  </button>
+                ))
+              : SPEEDS.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={!live && speed === value}
+                    onClick={() =>
+                      setClock({ speed: value, live: false, playing: true })
+                    }
+                  >
+                    {value}×
+                  </button>
+                ))}
           </div>
-          <button
-            type="button"
-            className="orbit-now"
-            data-live={live || undefined}
-            data-paused={!playing || undefined}
-            aria-pressed={live}
-            onClick={backToNow}
-            title={t('Back to now (N)', '回到现在（N）')}
-          >
-            <i aria-hidden="true" />
-            {live ? t('Now', '此刻') : t('Back to now', '回到现在')}
-          </button>
+          {mission ? (
+            <button
+              type="button"
+              className="orbit-now"
+              onClick={exitMission}
+              title={t('Back to the live sky (N)', '返回实时星空（N）')}
+            >
+              <i aria-hidden="true" />
+              {t('Exit replay', '退出回放')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="orbit-now"
+              data-live={live || undefined}
+              data-paused={!playing || undefined}
+              aria-pressed={live}
+              onClick={backToNow}
+              title={t('Back to now (N)', '回到现在（N）')}
+            >
+              <i aria-hidden="true" />
+              {live ? t('Now', '此刻') : t('Back to now', '回到现在')}
+            </button>
+          )}
           <div className="orbit-tape">
             <canvas
               ref={tape}
@@ -1544,14 +2226,20 @@ export function OrbitView({
               ref={scrub}
               className="orbit-scrub"
               type="range"
-              min={-SPAN / 1000}
-              max={SPAN / 1000}
-              step={3600}
+              min={mission ? 0 : -SPAN / 1000}
+              max={mission ? Math.round(missionSpan / 1000) : SPAN / 1000}
+              step={mission ? 600 : 3600}
               defaultValue={0}
-              aria-label={t('Time, ±14 days from now', '时间：此刻前后 14 天')}
+              aria-label={
+                mission
+                  ? t('Mission time', '任务时间')
+                  : t('Time, ±14 days from now', '时间：此刻前后 14 天')
+              }
               onChange={(event) =>
                 setClock({
-                  sim: anchor + Number(event.currentTarget.value) * 1000,
+                  sim:
+                    (missionRef.current?.track.start ?? anchor) +
+                    Number(event.currentTarget.value) * 1000,
                   live: false,
                 })
               }
@@ -1585,29 +2273,46 @@ export function OrbitView({
           <button
             type="button"
             className="orbit-icon-button"
-            aria-label={t('Learn about orbits', '轨道科普')}
-            title={t(
-              'Orbit types and the six elements',
-              '轨道类型与轨道六根数',
-            )}
-            aria-pressed={learnOpen}
-            onClick={() => (learnOpen ? closeLearn() : setLearnOpen(true))}
+            aria-label={t('Mission replays', '历史任务回放')}
+            title={t('Replay historical missions', '回放历史航天任务')}
+            aria-pressed={missionsOpen || !!mission}
+            onClick={() =>
+              mission ? exitMission() : setMissionsOpen((open) => !open)
+            }
           >
-            <GraduationCap size={15} />
+            <Rocket size={15} />
           </button>
-          <button
-            type="button"
-            className="orbit-icon-button"
-            aria-label={t('Visible passes', '可见过境预报')}
-            title={t('Visible passes over you', '你所在地的可见过境')}
-            aria-pressed={passesOpen}
-            onClick={() => {
-              void ensureCatalog();
-              setPassesOpen((open) => !open);
-            }}
-          >
-            <Telescope size={15} />
-          </button>
+          {/* Lessons and passes are about today's sky, not a replay. */}
+          {!mission && (
+            <>
+              <button
+                type="button"
+                className="orbit-icon-button"
+                aria-label={t('Learn about orbits', '轨道科普')}
+                title={t(
+                  'Orbit types and the six elements',
+                  '轨道类型与轨道六根数',
+                )}
+                aria-pressed={learnOpen}
+                onClick={() => (learnOpen ? closeLearn() : setLearnOpen(true))}
+              >
+                <GraduationCap size={15} />
+              </button>
+              <button
+                type="button"
+                className="orbit-icon-button"
+                aria-label={t('Visible passes', '可见过境预报')}
+                title={t('Visible passes over you', '你所在地的可见过境')}
+                aria-pressed={passesOpen}
+                onClick={() => {
+                  void ensureCatalog();
+                  setPassesOpen((open) => !open);
+                }}
+              >
+                <Telescope size={15} />
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="orbit-icon-button"

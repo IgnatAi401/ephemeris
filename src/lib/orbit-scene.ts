@@ -13,7 +13,6 @@ import {
   MOON_RADIUS,
   elevation,
   groundPoint,
-  moonPhase,
   moonPosition,
   period,
   positionAt,
@@ -32,6 +31,8 @@ import {
   type SpacecraftSnapshot,
 } from '@/lib/ephemeris';
 import { orbitPoint, trueAnomaly, type Elements } from '@/lib/kepler';
+import type { MissionTrack } from '@/lib/mission-track';
+import type { FrameId } from '@/lib/missions';
 import {
   basis,
   earthCover,
@@ -47,6 +48,8 @@ import {
   brightFragment,
   compositeFragment,
   fullscreenVertex,
+  pathFragment,
+  pathVertex,
   pointFragment,
   pointVertex,
   skyFragment,
@@ -63,9 +66,19 @@ export type SceneView = {
   zoom: number;
   /** Camera latitude above the equator. */
   elevation: number;
-  /** Camera longitude measured from the Sun's meridian; the Sun keeps its
-   * side of the frame while Earth turns underneath. */
+  /** Camera longitude measured from the Sun's meridian (or, with
+   * `cameraAxes`, from their x axis); the Sun keeps its side of the frame
+   * while Earth turns underneath. */
   azimuth: number;
+  /** What the camera looks at, as weights: 0 for both is Earth's centre;
+   * `aimMoon` 1 the Moon, `aimCraft` 1 the replayed mission's spacecraft. */
+  aimMoon: number;
+  aimCraft: number;
+  /** Added to the aim: Earth radii along `cameraAxes` (or the equatorial
+   * axes without them). */
+  aimX: number;
+  aimY: number;
+  aimZ: number;
   leo: number;
   gnss: number;
   /** Meteor trails behind GNSS, Iridium, ORBCOMM and the stations. */
@@ -101,6 +114,12 @@ export type SceneView = {
   /** Teaching mode: how strongly the satellites in the focus mask (see
    * `setFocus`) stand out from the rest, 0–1. */
   focus?: number;
+  /** Axes `elevation` and `azimuth` are measured in (rows x, y, z), for a
+   * camera that turns with a mission's reference frame; Sun-relative
+   * equatorial when absent. */
+  cameraAxes?: readonly (readonly number[])[];
+  /** A historical mission being replayed (lib/missions.ts). */
+  mission?: MissionView | null;
   /** An orbit drawn from classical elements (the learn panel). */
   example?: {
     elements: Elements;
@@ -111,6 +130,15 @@ export type SceneView = {
      * then circles it. `arrival` labels the meeting point until then. */
     transfer?: { depart: number; arrive: number; arrival: string };
   } | null;
+};
+export type MissionView = {
+  track: MissionTrack;
+  frame: FrameId;
+  /** Fades the mission's drawing in, 0–1. */
+  weight: number;
+  /** Label and colour per spacecraft, in track order. */
+  craft: readonly { label: string; color: string }[];
+  events: readonly { time: number; label: string }[];
 };
 export type Selection = {
   index: number;
@@ -322,6 +350,74 @@ export function createOrbitScene(
     cullFace: false,
     uniforms: { ...layerUniforms(), uWidth: { value: TRAIL_WIDTH } },
   });
+  const path = new Program(gl, {
+    vertex: pathVertex,
+    fragment: pathFragment,
+    ...passOptions,
+    cullFace: false,
+    uniforms: {
+      ...cameraUniforms(),
+      uOrigin: { value: [0, 0, 0] },
+      uAxes: { value: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
+      uScale: { value: 1 },
+      uNow: { value: 0 },
+      uMoonAt: { value: [0, 0, 0] },
+      uMoonR: { value: MOON_RADIUS },
+      uColor: { value: [1, 1, 1] },
+      uAlpha: { value: 1 },
+    },
+  });
+  // Ribbon meshes of each mission path, per spacecraft and frame, built on
+  // first use: two vertices per sample, one either side.
+  const pathMeshes = new WeakMap<MissionTrack, Map<string, Mesh>>();
+  const pathMesh = (track: MissionTrack, index: number, frame: FrameId) => {
+    let meshes = pathMeshes.get(track);
+    if (!meshes) pathMeshes.set(track, (meshes = new Map()));
+    const key = `${index}:${frame}`;
+    const cached = meshes.get(key);
+    if (cached) return cached;
+    const local = track.localPath(index, frame);
+    const times = track.times(index);
+    const count = times.length;
+    const position = new Float32Array(count * 6);
+    const next = new Float32Array(count * 6);
+    const side = new Float32Array(count * 2);
+    const time = new Float32Array(count * 2);
+    const indices = new Uint32Array(Math.max(0, count - 1) * 6);
+    for (let k = 0; k < count; k++) {
+      // The last sample looks back along its incoming segment.
+      const ahead = k < count - 1 ? k + 1 : k - 1;
+      const sign = k < count - 1 ? 1 : -1;
+      for (let axis = 0; axis < 3; axis++) {
+        const here = local[k * 3 + axis];
+        const toward =
+          sign > 0
+            ? local[ahead * 3 + axis]
+            : 2 * here - local[ahead * 3 + axis];
+        position[k * 6 + axis] = position[k * 6 + 3 + axis] = here;
+        next[k * 6 + axis] = next[k * 6 + 3 + axis] = toward;
+      }
+      side.set([-1, 1], k * 2);
+      time.fill((times[k] - track.start) / 1000, k * 2, k * 2 + 2);
+      if (k < count - 1)
+        indices.set(
+          [k * 2, k * 2 + 1, k * 2 + 2, k * 2 + 1, k * 2 + 3, k * 2 + 2],
+          k * 6,
+        );
+    }
+    const mesh = new Mesh(gl, {
+      program: path,
+      geometry: new Geometry(gl, {
+        position: { size: 3, data: position },
+        next: { size: 3, data: next },
+        side: { size: 1, data: side },
+        time: { size: 1, data: time },
+        index: { data: indices },
+      }),
+    });
+    meshes.set(key, mesh);
+    return mesh;
+  };
   const triangle = new Triangle(gl);
   const skyMesh = new Mesh(gl, { geometry: triangle, program: sky });
   const insetMesh = new Mesh(gl, { geometry: triangle, program: inset });
@@ -493,17 +589,151 @@ export function createOrbitScene(
     post.swap.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
   };
 
+  /** A replayed mission on the overlay: the events along the lead
+   * spacecraft's path and the spacecraft themselves (the paths are drawn
+   * on the GPU, see `pathMesh`). */
+  const drawMission = (
+    mission: MissionView,
+    craftNow: (number[] | null)[],
+    frame: {
+      cam: Camera;
+      moon: readonly number[];
+      earthR: number;
+      time: number;
+      screen: (p: readonly number[]) => [number, number];
+      label: (
+        value: string,
+        x: number,
+        y: number,
+        opacity: number,
+        align?: CanvasTextAlign,
+      ) => void;
+      rgba: (color: string, alpha: number) => string;
+    },
+  ) => {
+    if (!context) return;
+    const { cam, moon, earthR, time, screen, label, rgba } = frame;
+    const { track, weight } = mission;
+    const hidden = (p: readonly number[]) =>
+      earthCover(cam, p, earthR) === 1 ||
+      earthCover(cam, p, MOON_RADIUS, moon) === 1;
+    const point = [0, 0, 0];
+    // Events on the lead spacecraft's path: done ones filled, the rest open.
+    // Only the next event, and the last one for six hours, are labelled.
+    const lead = track.craft[0];
+    let next = -1;
+    let last = -1;
+    mission.events.forEach((event, index) => {
+      if (event.time > time && next < 0) next = index;
+      if (event.time <= time) last = index;
+    });
+    // Screen spots already labelled: the spacecraft first.
+    const labelled: [number, number][] = [];
+    for (const at of craftNow) {
+      if (!at) continue;
+      const [x, y] = screen(at);
+      if (Number.isFinite(x + y)) labelled.push([x, y - 20]);
+    }
+    mission.events.forEach((event, index) => {
+      if (!lead.at(event.time, point)) return;
+      const p = track.shift(mission.frame, event.time, time, point);
+      if (hidden(p)) return;
+      const [x, y] = screen(p);
+      if (!Number.isFinite(x + y)) return;
+      const done = event.time <= time;
+      context.fillStyle = rgba('#ffffff', (done ? 0.85 : 0) * weight);
+      context.strokeStyle = rgba('#ffffff', 0.85 * weight);
+      context.lineWidth = 1.2;
+      context.beginPath();
+      context.moveTo(x, y - 4.5);
+      context.lineTo(x + 4.5, y);
+      context.lineTo(x, y + 4.5);
+      context.lineTo(x - 4.5, y);
+      context.closePath();
+      context.fill();
+      context.stroke();
+      const recent = index === last && time - event.time < 6 * 3600000;
+      // Right by the spacecraft or another label, the name would collide:
+      // the side panel lists it anyway.
+      const crowded = labelled.some(
+        ([lx, ly]) => Math.abs(lx - x) < 120 && Math.abs(ly - y) < 18,
+      );
+      if ((index === next || recent) && !crowded) {
+        label(event.label, x + 9, y + 14, (recent ? 0.75 : 0.95) * weight);
+        labelled.push([x, y]);
+      }
+    });
+
+    // The spacecraft themselves.
+    craftNow.forEach((at, index) => {
+      if (!at) return;
+      const [x, y] = screen(at);
+      if (!Number.isFinite(x + y)) return;
+      const behind = hidden(at);
+      const { color, label: name } = mission.craft[index];
+      const alpha = (behind ? 0.4 : 1) * weight;
+      context.shadowColor = rgba(color, 0.9 * alpha);
+      context.shadowBlur = 10;
+      context.fillStyle = rgba(color, alpha);
+      context.beginPath();
+      context.arc(x, y, 3.4, 0, Math.PI * 2);
+      context.fill();
+      context.shadowBlur = 0;
+      context.strokeStyle = rgba(color, 0.7 * alpha);
+      context.lineWidth = 1.2;
+      context.beginPath();
+      context.arc(x, y, 8, 0, Math.PI * 2);
+      context.stroke();
+      label(name, x + 12, y - 10, alpha);
+    });
+  };
+
   const render = (view: SceneView, clock: number, text: SceneText) => {
     if (gl.isContextLost()) return;
     const { width, height, dpr } = size;
     const { time } = view;
     const sun = sunDirection(time) as Vec3;
-    const orientation = basis(
-      view.elevation,
-      Math.atan2(sun[1], sun[0]) + view.azimuth,
-    );
+    const axes = view.cameraAxes;
+    const orientation = axes
+      ? (() => {
+          const local = basis(view.elevation, view.azimuth);
+          const map = (v: readonly number[]) =>
+            [0, 1, 2].map(
+              (i) => v[0] * axes[0][i] + v[1] * axes[1][i] + v[2] * axes[2][i],
+            ) as Vec3;
+          return {
+            toward: map(local.toward),
+            right: map(local.right),
+            up: map(local.up),
+          };
+        })()
+      : basis(view.elevation, Math.atan2(sun[1], sun[0]) + view.azimuth);
     const { toward, right, up } = orientation;
-    const moon = moonPosition(time);
+    const mission = view.mission ?? null;
+    // A replayed mission brings its own Moon, from the same JPL ephemeris as
+    // the spacecraft; the analytic one is ~2000 km off, more than its radius.
+    const moon = mission
+      ? mission.track.moon(time, [0, 0, 0])
+      : moonPosition(time);
+    // The mission's spacecraft now, for the camera and the markers.
+    const craftNow = mission
+      ? mission.track.craft.map((track) => {
+          const at = [0, 0, 0];
+          return track.at(time, at) ? at : null;
+        })
+      : [];
+    const lead = craftNow.find((at) => at !== null) ?? null;
+    const offset = [view.aimX, view.aimY, view.aimZ];
+    const target = [0, 1, 2].map(
+      (axis) =>
+        moon[axis] * view.aimMoon +
+        (lead ? lead[axis] * view.aimCraft : 0) +
+        (axes
+          ? offset[0] * axes[0][axis] +
+            offset[1] * axes[1][axis] +
+            offset[2] * axes[2][axis]
+          : offset[axis]),
+    );
     // Seen from the camera the Moon may project anywhere from beside Earth to
     // 64 Earth radii out; fitting it keeps the Earth–Moon view filled.
     const fit = zoomToFit(width, height, moon, orientation, 18);
@@ -511,7 +741,7 @@ export function createOrbitScene(
       Math.log(view.zoom) * (1 - view.fitMoon) + Math.log(fit) * view.fitMoon,
     );
     if (!Number.isFinite(zoom) || zoom <= 0) return;
-    const cam = makeCamera(width, height, zoom, orientation);
+    const cam = makeCamera(width, height, zoom, orientation, target);
     camera = cam;
     const { center, scale } = cam;
     // Far out, Earth is drawn at least five pixels across.
@@ -521,7 +751,7 @@ export function createOrbitScene(
       return [x, y];
     };
     const hidden = (p: readonly number[]) => earthCover(cam, p, earthR) === 1;
-    for (const program of [sky, inset, points, trails]) {
+    for (const program of [sky, inset, points, trails, path]) {
       const u = program.uniforms;
       u.uSize.value = [width, height];
       u.uDpr.value = dpr;
@@ -591,7 +821,7 @@ export function createOrbitScene(
       width - (view.insetRight ?? 0) - lens - 20,
       lens + 20,
     ];
-    const lensWeight = view.lunar * (1 - ease) * (craft ? 1 : 0);
+    const lensWeight = view.lunar * (1 - ease) * (craft && !mission ? 1 : 0);
     inset.uniforms.uInset.value = [lensAt[0], lensAt[1], lens];
     inset.uniforms.uInsetAlpha.value = lensWeight;
 
@@ -627,7 +857,9 @@ export function createOrbitScene(
     const bloom = view.bloom > 0.01;
     const into = bloom ? post.scene : undefined;
     renderer.render({ scene: skyMesh, target: into });
-    if (fleet && pointMesh && trailMesh) {
+    // Nothing to propagate while every group is hidden (a mission replay).
+    const anyGroup = pickAlpha.some((alpha) => alpha > 0.001);
+    if (fleet && pointMesh && trailMesh && anyGroup) {
       propagate(fleet, time, positions);
       pointMesh.geometry.attributes.position.needsUpdate = true;
       if (view.trails > 0.01) {
@@ -678,6 +910,27 @@ export function createOrbitScene(
         points.uniforms.uHalo.value = 0;
       }
       renderer.render({ scene: pointMesh, target: into, clear: false });
+    }
+    if (mission && mission.weight > 0.01) {
+      const { track, frame } = mission;
+      const shown = track.basis(frame, time);
+      const u = path.uniforms;
+      u.uOrigin.value = [...shown.origin];
+      u.uAxes.value = shown.axes.flatMap((axis) => [...axis]);
+      u.uScale.value = shown.scale;
+      u.uNow.value = (time - track.start) / 1000;
+      u.uMoonAt.value = [...moon];
+      track.craft.forEach((craftTrack, index) => {
+        // A spacecraft that has not split off yet is not drawn.
+        if (time < craftTrack.start) return;
+        u.uColor.value = hex(mission.craft[index].color);
+        u.uAlpha.value = mission.weight;
+        renderer.render({
+          scene: pathMesh(track, index, frame),
+          target: into,
+          clear: false,
+        });
+      });
     }
     if (lensWeight > 0.01)
       renderer.render({ scene: insetMesh, target: into, clear: false });
@@ -920,6 +1173,16 @@ export function createOrbitScene(
         label(example.label, lx, ly, behind ? 0.5 : 1, align);
       }
     }
+    if (mission && mission.weight > 0.01)
+      drawMission(mission, craftNow, {
+        cam,
+        moon,
+        earthR,
+        time,
+        screen,
+        label,
+        rgba,
+      });
     const hovered = view.hovered;
     if (
       hovered &&
@@ -1061,7 +1324,11 @@ export function createOrbitScene(
       context.setLineDash([]);
     }
 
-    const { illuminated, waxing, distance } = moonPhase(time);
+    // Phase from the Moon actually drawn (the mission's own, if any).
+    const distance = Math.hypot(moon[0], moon[1], moon[2]);
+    const illuminated = (1 - dot(sun, moon) / distance) / 2;
+    // Waxing while the Moon runs east of the Sun: the cross product points north.
+    const waxing = sun[0] * moon[1] - sun[1] * moon[0] > 0;
     // Phone-width frames get the short form of every label.
     const narrow = width < 460;
     const phase = text.phase(Math.round(illuminated * 100), waxing);
@@ -1085,10 +1352,11 @@ export function createOrbitScene(
       (0.55 + 0.45 * (1 - ease)) * (1 - view.deep),
       moonAlign,
     );
+    const [earthX, earthY] = screen([0, 0, 0]);
     label(
       text.earth,
-      center[0] + earthPx + 9,
-      center[1] + earthPx + 12,
+      earthX + earthPx + 9,
+      earthY + earthPx + 12,
       Math.min(1, Math.max(0, (zoom - 20) / 20)),
     );
 
@@ -1165,7 +1433,8 @@ export function createOrbitScene(
         context.stroke();
         label(name, lx, ly + 16, 0.8 * weight, 'center');
       }
-      if (craft) {
+      // Today's spacecraft have no place in a replayed mission.
+      if (craft && !mission) {
         const at = [0, 0, 0];
         for (const { key, en, zh, color } of DEEP_SPACECRAFT) {
           if (!vectorAt(craft, key, time, at)) continue;
