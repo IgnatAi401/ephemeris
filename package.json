@@ -2,7 +2,7 @@
   "name": "ephemeris",
   "version": "0.1.0",
   "private": true,
-  "description": "orbit.ignat.ai: a full-screen view of satellites, the Moon and Sun\u2013Earth L1/L2 spacecraft.",
+  "description": "orbit.ignat.ai: a full-screen view of satellites, the Moon and Sun–Earth L1/L2 spacecraft.",
   "type": "module",
   "engines": {
     "node": ">=24.21.0 <25",
@@ -26,6 +26,7 @@
     "ogl": "1.0.11",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "satellite.js": "7.1.0",
     "topojson-client": "3.1.0"
   },
   "devDependencies": {

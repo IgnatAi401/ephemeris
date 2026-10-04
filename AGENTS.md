@@ -20,6 +20,13 @@
 - `src/lib/orbit-stage.ts`：后台加载数据和陆地纹理、构建场景、WebGL 上下文丢失后重建。
 - `src/lib/orbit-land*.ts`：在 Worker 中把 `public/maps/countries-50m.json` 画成陆地纹理。
 - `src/lib/site.ts`：站点域名和数据来源列表（页脚用）。
+- 实用功能（阶段 4）：
+  - `src/lib/catalog.ts`：按需加载 `catalog.json`（首次悬停、搜索、点选或打开过境面板时），与卫星群同序，支持按名称/NORAD 编号搜索。
+  - `src/lib/precise.ts`：选中卫星用 `satellite.js`（SGP4/SDP4）精确推算，动态导入，不进首屏包；OMM 由 `orbits.json` 的原始根数（`fleet.elements`）和 catalog 的阻力项重建。满天光点仍用 `orbits.ts` 的快速 J2 推算。
+  - 点选：`OrbitScene.pick()` 在 CPU 上按屏幕距离找最近的可见卫星（约 1–4 ms），不做 GPU 读回。场景为选中卫星画轨道线、星下点轨迹（按地球自转校正到当前时刻）和标记。
+  - `src/lib/passes.ts`：过境预报，条件为仰角 > 10°、卫星受光（satellite.js `shadowFraction`）、观测地太阳低于 −6°；30 秒步长扫描、二分细化起止。`src/lib/cities.ts` 为手选城市。位置**只在浏览器内计算，不上传**；只有勾选“记住”才写入 localStorage（`orbit.observer`）。
+  - `src/lib/share.ts`：分享链接的 hash 格式（`t`、`cam`、`f`、`sel`、`layers`）。只有点“分享”时才写入地址栏；打开带 hash 的链接会跳过开场、暂停在该时刻；之后第一次点击或滚轮就清掉 hash，避免刷新时一直停在旧时刻。
+  - 组件：`search-box.tsx`、`info-card.tsx`、`pass-panel.tsx`、`sky-chart.tsx`，都放在场景右侧的 `.orbit-side` 栏（窄屏时变为底部浮层）。
 - `scripts/fetch-orbits.mjs`、`scripts/check-orbits.mjs`：抓取与离线校验。
 - `public/data/`：抓取产物，**不进 Git**，只随构建部署。
 - `public/textures/night-lights.webp`：NASA Black Marble 2016 夜光（来源与处理见同目录 `README.md`）。

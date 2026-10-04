@@ -482,6 +482,334 @@ body {
   }
 }
 
+/* The satellite under the mouse can be clicked. */
+.orbit-map-stage[data-hover='satellite'] {
+  cursor: pointer;
+}
+
+/* Right-hand column: search, the selected satellite, passes. */
+.orbit-side {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 300px;
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  pointer-events: none;
+  cursor: auto;
+  scrollbar-width: thin;
+}
+.orbit-side > * {
+  pointer-events: auto;
+}
+.orbit-panel,
+.orbit-card,
+.orbit-passes {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(12, 13, 22, 0.82);
+  backdrop-filter: blur(10px);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.orbit-side button {
+  font: inherit;
+  cursor: pointer;
+}
+.orbit-side button:focus-visible,
+.orbit-side select:focus-visible,
+.orbit-side input:focus-visible {
+  outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
+  outline-offset: 1px;
+}
+.orbit-search {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(12, 13, 22, 0.72);
+  backdrop-filter: blur(10px);
+  color: var(--text-3);
+}
+.orbit-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: 500 12px/1 var(--font-sans);
+  outline: none !important;
+}
+.orbit-search input::placeholder {
+  color: var(--text-3);
+}
+.orbit-search kbd {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: 500 10px/16px var(--font-mono);
+}
+.orbit-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 3;
+  max-height: 320px;
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(14, 15, 25, 0.97);
+  list-style: none;
+  box-shadow: 0 20px 40px -18px rgba(0, 0, 0, 0.8);
+}
+.orbit-search-results button {
+  display: grid;
+  grid-template-columns: 8px 1fr;
+  column-gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-1);
+  text-align: left;
+}
+.orbit-search-results button[data-active] {
+  background: rgba(var(--glow-rgb), 0.16);
+}
+.orbit-search-results i,
+.orbit-card header i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dot);
+  box-shadow: 0 0 6px var(--dot);
+}
+.orbit-search-results span {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orbit-search-results small {
+  grid-column: 2;
+  color: var(--text-3);
+  font: 500 10px/1.4 var(--font-mono);
+}
+.orbit-search-note {
+  padding: 8px;
+  color: var(--text-3);
+}
+.orbit-card,
+.orbit-passes {
+  flex: 0 0 auto;
+  padding: 12px 14px 14px;
+}
+.orbit-card header,
+.orbit-passes header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.orbit-card header div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.orbit-card h2,
+.orbit-passes h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orbit-passes h2 {
+  flex: 1 1 auto;
+}
+.orbit-card header p {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.orbit-card header button,
+.orbit-passes header button {
+  display: grid;
+  flex: 0 0 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-3);
+}
+.orbit-card header button:hover,
+.orbit-passes header button:hover {
+  background: rgba(var(--glow-rgb), 0.12);
+  color: var(--text-1);
+}
+.orbit-card dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+.orbit-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.orbit-card dt {
+  color: var(--text-3);
+}
+.orbit-card dd {
+  margin: 0;
+  color: var(--text-1);
+  font: 500 11.5px/1.5 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.orbit-card-note,
+.orbit-passes-note {
+  margin: 10px 0 0;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.orbit-card-action,
+.orbit-passes-where button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  margin-top: 10px;
+  padding: 0 10px;
+  border: 1px solid rgba(var(--glow-highlight-rgb), 0.3);
+  border-radius: 8px;
+  background: rgba(var(--glow-rgb), 0.14);
+  color: var(--text-1);
+}
+.orbit-card-action:hover,
+.orbit-passes-where button:hover {
+  background: rgba(var(--glow-rgb), 0.24);
+}
+.orbit-passes-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.orbit-passes-where button {
+  margin-top: 0;
+}
+.orbit-passes-where select {
+  flex: 1 1 120px;
+  height: 30px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1);
+  font: inherit;
+}
+.orbit-passes-remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.orbit-sky {
+  display: block;
+  width: min(100%, 220px);
+  aspect-ratio: 1;
+  margin: 10px auto 4px;
+}
+.orbit-passes-list {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.orbit-passes-list li {
+  position: relative;
+}
+.orbit-passes-list li > button:first-child {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 36px 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+  text-align: left;
+}
+.orbit-passes-list li[data-chosen] > button:first-child {
+  border-color: rgba(159, 240, 200, 0.35);
+  background: rgba(159, 240, 200, 0.07);
+}
+.orbit-pass-when strong {
+  color: var(--text-1);
+  font: 500 12px/1.4 var(--font-mono);
+}
+.orbit-pass-name {
+  color: var(--signal);
+  font-size: 11px;
+}
+.orbit-pass-sky,
+.orbit-pass-why {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.orbit-pass-play {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(159, 240, 200, 0.18);
+  color: var(--signal);
+  transform: translateY(-50%);
+}
+.orbit-pass-play:hover {
+  background: rgba(159, 240, 200, 0.3);
+}
+.orbit-icon-button {
+  flex: 0 0 30px;
+}
+.orbit-timeline .orbit-icon-button[aria-pressed='true'] {
+  background: rgba(var(--glow-rgb), 0.2);
+  color: var(--text-1);
+}
+.orbit-share-note {
+  flex: 0 0 auto;
+  color: var(--signal);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* Keyboard shortcuts dialog. */
 .orbit-help-backdrop {
   position: fixed;
@@ -737,11 +1065,44 @@ body {
     margin-left: auto;
   }
 }
-/* Below this the freshness badge and the layer panel would meet. */
+/* Below this the freshness badge and the layer panel would meet, and the
+   right-hand column becomes a sheet along the bottom of the scene. */
 @container (max-width: 760px) {
   .orbit-key {
     top: 46px;
     max-height: calc(100% - 58px);
+  }
+  .orbit-side {
+    top: auto;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: auto;
+    max-height: 62%;
+  }
+  /* Search last, nearest the thumb; a spacer keeps the stack at the bottom
+     while it fits and lets it scroll normally when it does not. */
+  .orbit-side::before {
+    content: '';
+    order: -1;
+    margin-top: auto;
+  }
+  .orbit-side .orbit-search {
+    order: 9;
+  }
+  .orbit-card-note {
+    display: none;
+  }
+  .orbit-card,
+  .orbit-passes {
+    padding: 10px 12px 12px;
+  }
+  .orbit-card dl {
+    gap: 2px;
+  }
+  .orbit-search-results {
+    top: auto;
+    bottom: calc(100% + 4px);
   }
 }
 @container (max-width: 640px) {

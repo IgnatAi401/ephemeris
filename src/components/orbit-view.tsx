@@ -7,16 +7,29 @@ import {
 } from 'react';
 import {
   Keyboard,
+  Link2,
   Moon,
   Orbit,
   Pause,
   Play,
   Radar,
   Satellite,
+  Telescope,
 } from 'lucide-react';
 import type { Language } from '@/lib/i18n';
-import { CONSTELLATIONS } from '@/lib/orbits';
-import type { OrbitScene, SceneText, SceneView } from '@/lib/orbit-scene';
+import {
+  CONSTELLATIONS,
+  groundPoint,
+  positionAt,
+  sunDirection,
+  type Fleet,
+} from '@/lib/orbits';
+import type {
+  OrbitScene,
+  SceneText,
+  SceneView,
+  Selection,
+} from '@/lib/orbit-scene';
 import { drawTape, TAPE_PX_PER_HOUR } from '@/lib/orbit-tape';
 import {
   loadOrbitStage,
@@ -35,13 +48,28 @@ import { Fallback } from '@/components/fallback';
 import { Freshness } from '@/components/freshness';
 import { LayerPanel } from '@/components/layer-panel';
 import { ShortcutHelp } from '@/components/shortcut-help';
+import { SearchBox } from '@/components/search-box';
+import { InfoCard } from '@/components/info-card';
+import { PassPanel } from '@/components/pass-panel';
+import { loadCatalog, type Catalog, type CatalogEntry } from '@/lib/catalog';
+import { precise, type Precise } from '@/lib/precise';
+import type { Observer, Pass } from '@/lib/passes';
+import { readHash, writeHash } from '@/lib/share';
 
 type Preset = 'leo' | 'gnss' | 'moon' | 'deep';
 type Focus = Preset | 'overview';
 /** The tweened part of a frame: camera and the topic weights. */
 type Pose = Omit<
   SceneView,
-  'time' | 'groups' | 'lights' | 'recent' | 'halo' | 'bloom'
+  | 'time'
+  | 'groups'
+  | 'lights'
+  | 'recent'
+  | 'halo'
+  | 'bloom'
+  | 'selected'
+  | 'hovered'
+  | 'insetRight'
 >;
 
 const DEG = Math.PI / 180;
@@ -148,6 +176,8 @@ const clamp = (time: number, anchor: number) =>
   Math.min(anchor + SPAN, Math.max(anchor - SPAN, time));
 const utc = (time: number) =>
   new Date(time).toISOString().slice(0, 19).replace('T', ' ');
+// The clock the camera tweens run on (the frame loop's own time base).
+const frameClock = () => performance.now();
 const reducedMotion = () =>
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -229,14 +259,30 @@ export function OrbitView({
   const tape = useRef<HTMLCanvasElement>(null);
   const readout = useRef<HTMLOutputElement>(null);
   const [anchor] = useState(() => Date.now());
+  // A shared link (lib/share.ts) sets the opening state instead of the intro.
+  const [shared] = useState(() =>
+    readHash(
+      window.location.hash,
+      Object.keys(defaultLayers(true)) as LayerId[],
+    ),
+  );
+  const [defaults] = useState(() =>
+    defaultLayers(!window.matchMedia('(pointer: coarse)').matches),
+  );
+  const fromLink = Object.keys(shared).length > 0;
+  const linkFocus: Focus =
+    shared.focus && shared.focus in POSES
+      ? (shared.focus as Focus)
+      : 'overview';
   // Simulation clock: `sim` at wall time `real`, advancing at `speed`.
   // `live` is the "now" mode: real-time speed, pinned to the present until
   // the tape is moved or another speed is chosen.
   const clock = useRef({
-    sim: anchor,
+    sim: shared.time === undefined ? anchor : clamp(shared.time, anchor),
     real: anchor,
     speed: DEFAULT_SPEED,
-    playing: true,
+    // A linked instant opens paused, exactly as shared.
+    playing: shared.time === undefined,
     live: false,
   });
   // Tape drag, then its glide after release; `resume` restores playback.
@@ -252,7 +298,17 @@ export function OrbitView({
     at: number;
     resume: boolean;
   } | null>(null);
-  const tween = useRef<Tween>(still(INTRO_POSE));
+  const tween = useRef<Tween>(
+    still(
+      shared.camera
+        ? { ...POSES[linkFocus], ...shared.camera, fitMoon: 0 }
+        : fromLink
+          ? POSES[linkFocus]
+          : INTRO_POSE,
+    ),
+  );
+  // A linked camera must not be replaced by the preset's own on mount.
+  const skipFocusTween = useRef(fromLink);
   // Camera drag: active pointers, and the spin left after release (rad/ms).
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const spin = useRef({ azimuth: 0, elevation: 0, at: 0 });
@@ -260,21 +316,23 @@ export function OrbitView({
   // Opening sequence: starts once the scene is ready; null until then.
   const intro = useRef<{ start: number | null; done: boolean }>({
     start: null,
-    done: false,
+    done: fromLink,
   });
   const sceneRef = useRef<OrbitScene | null>(null);
   const invalidate = useRef(() => {});
   const text = useRef(sceneText(lang));
-  const [focus, setFocus] = useState<Focus>('overview');
-  const [playing, setPlaying] = useState(true);
+  const [focus, setFocus] = useState<Focus>(linkFocus);
+  const focusRef = useRef(focus);
+  const [playing, setPlaying] = useState(shared.time === undefined);
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
   const [live, setLive] = useState(false);
   const [help, setHelp] = useState(false);
   // Bloom and an open layer panel only by default where there is room and,
   // for bloom, a GPU that is probably up to it.
-  const [layers, setLayers] = useState<Layers>(() =>
-    defaultLayers(!window.matchMedia('(pointer: coarse)').matches),
-  );
+  const [layers, setLayers] = useState<Layers>(() => ({
+    ...defaults,
+    ...shared.layers,
+  }));
   const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 720);
   const layersRef = useRef(layers);
   // Usually built before the view mounts.
@@ -285,6 +343,25 @@ export function OrbitView({
   const [status, setStatus] = useState<
     'idle' | 'ready' | 'failed' | 'unsupported'
   >(() => (readyOrbitStage() ? 'ready' : 'idle'));
+  // --- Selection, search and passes ----------------------------------------
+  const [fleet, setFleet] = useState<Fleet | null>(
+    () => readyOrbitStage()?.fleet ?? null,
+  );
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [selected, setSelected] = useState<CatalogEntry | null>(null);
+  const [model, setModel] = useState<Precise | null>(null);
+  const [passesOpen, setPassesOpen] = useState(false);
+  const [shareNote, setShareNote] = useState<string | null>(null);
+  const selectedRef = useRef<CatalogEntry | null>(null);
+  const selection = useRef<Selection | null>(null);
+  // The pointer over the scene (CSS px in the stage), and what it is over.
+  const hover = useRef<{ x: number; y: number } | null>(null);
+  const hovered = useRef<{ index: number; label: string } | null>(null);
+  const press = useRef<{ x: number; y: number; at: number } | null>(null);
+  const side = useRef<HTMLDivElement>(null);
+  const insetRight = useRef(0);
+  const catalogRef = useRef<Catalog | null>(null);
+  const fleetRef = useRef<Fleet | null>(fleet);
 
   useEffect(() => {
     text.current = sceneText(lang);
@@ -294,6 +371,165 @@ export function OrbitView({
     layersRef.current = layers;
     invalidate.current();
   }, [layers]);
+  useEffect(() => {
+    focusRef.current = focus;
+  }, [focus]);
+
+  /** Fetch catalog.json once, the first time anything needs a name. */
+  const ensureCatalog = () => {
+    const current = fleetRef.current;
+    if (!current) return Promise.resolve(null);
+    if (catalogRef.current) return Promise.resolve(catalogRef.current);
+    return loadCatalog(current).then(
+      (loaded) => {
+        catalogRef.current = loaded;
+        setCatalog(loaded);
+        return loaded;
+      },
+      () => null,
+    );
+  };
+  const select = (entry: CatalogEntry | null) => {
+    selectedRef.current = entry;
+    setSelected(entry);
+    setModel(null);
+    const current = fleetRef.current;
+    if (!entry || !current) return;
+    precise(current, entry).then(
+      (next) => {
+        if (selectedRef.current === entry) setModel(next);
+      },
+      () => {},
+    );
+  };
+  // What the scene draws for the selection: SGP4 once loaded, the fast
+  // propagator until then.
+  useEffect(() => {
+    const current = fleetRef.current;
+    if (!selected || !current) {
+      selection.current = null;
+      invalidate.current();
+      return;
+    }
+    const out = new Float32Array(3);
+    const fast = (time: number) => {
+      positionAt(current, selected.index, time, out, 0);
+      return [out[0], out[1], out[2]];
+    };
+    selection.current = {
+      index: selected.index,
+      // One colour for whatever is selected, so it stands out from its group.
+      color: '#9ff0c8',
+      label: selected.name,
+      position: model ? (time) => model.position(time) : fast,
+      period:
+        model?.period ?? 86400000 / current.elements[selected.index * 7 + 1],
+    };
+    invalidate.current();
+  }, [selected, model]);
+
+  /** Select a pass's satellite and run the clock through the pass at 60×,
+   * starting half a minute early. */
+  const playPass = (pass: Pass, observer: Observer) => {
+    const entry = catalogRef.current?.byNorad.get(pass.norad);
+    if (entry && selectedRef.current?.norad !== pass.norad) select(entry);
+    setClock({
+      sim: pass.start.time - 30000,
+      speed: 60,
+      playing: true,
+      live: false,
+    });
+    // Turn the camera to look down on the observer at mid-pass. Its
+    // azimuth is measured from the Sun's meridian (see SceneView).
+    const middle = (pass.start.time + pass.end.time) / 2;
+    const site = groundPoint(observer.latitude, observer.longitude, middle);
+    const sun = sunDirection(middle);
+    const now = frameClock();
+    intro.current.done = true;
+    spin.current = { azimuth: 0, elevation: 0, at: 0 };
+    const current = poseAt(tween.current, now);
+    const target: Pose = {
+      ...POSES.leo,
+      zoom: 1.7,
+      azimuth: Math.atan2(site[1], site[0]) - Math.atan2(sun[1], sun[0]),
+      elevation: Math.max(
+        -ELEVATION_LIMIT,
+        Math.min(ELEVATION_LIMIT, observer.latitude * DEG),
+      ),
+    };
+    current.azimuth =
+      target.azimuth +
+      ((((current.azimuth - target.azimuth) % (2 * Math.PI)) + 3 * Math.PI) %
+        (2 * Math.PI)) -
+      Math.PI;
+    tween.current = {
+      from: current,
+      to: target,
+      start: now,
+      duration: reducedMotion() ? 1 : 1800,
+    };
+    // The preset buttons show near-Earth, without re-running its own tween.
+    if (focus !== 'leo') {
+      skipFocusTween.current = true;
+      setFocus('leo');
+    }
+  };
+  /** Put the current view in the URL and copy the link. */
+  const share = () => {
+    const scene = sceneRef.current;
+    // Where the camera is, or is heading if a transition is under way.
+    const pose = poseAt(tween.current, Number.POSITIVE_INFINITY);
+    const hash = writeHash({
+      time: simTime(),
+      camera: {
+        azimuth: pose.azimuth,
+        elevation: pose.elevation,
+        zoom: scene?.camera()?.zoom ?? pose.zoom,
+      },
+      focus,
+      norad: selected?.norad ?? null,
+      layers,
+      defaults,
+    });
+    window.history.replaceState(null, '', hash);
+    const url = window.location.href;
+    const done = (copied: boolean) => {
+      setShareNote(
+        copied
+          ? t('Link copied', '链接已复制')
+          : t('Link is in the address bar', '链接已写入地址栏'),
+      );
+      window.setTimeout(() => setShareNote(null), 2200);
+    };
+    if (navigator.clipboard)
+      navigator.clipboard.writeText(url).then(
+        () => done(true),
+        () => done(false),
+      );
+    else done(false);
+  };
+  // A link describes one moment: the first interaction after it was opened
+  // (or shared) drops the hash, so a reload starts fresh, with the intro.
+  useEffect(() => {
+    if (!fromLink && !shareNote) return;
+    const clear = () => {
+      if (window.location.hash)
+        window.history.replaceState(
+          null,
+          '',
+          window.location.pathname + window.location.search,
+        );
+    };
+    const timer = window.setTimeout(() => {
+      window.addEventListener('pointerdown', clear, { once: true });
+      window.addEventListener('wheel', clear, { once: true });
+    }, 50);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pointerdown', clear);
+      window.removeEventListener('wheel', clear);
+    };
+  }, [fromLink, shareNote]);
 
   const simTime = () => {
     const { sim, real, speed: rate, playing: running } = clock.current;
@@ -361,6 +597,10 @@ export function OrbitView({
   useEffect(() => {
     // The opening tween is set up when the scene becomes ready.
     if (!intro.current.done) return;
+    if (skipFocusTween.current) {
+      skipFocusTween.current = false;
+      return;
+    }
     const now = performance.now();
     const current = poseAt(tween.current, now);
     const target = POSES[focus];
@@ -384,9 +624,22 @@ export function OrbitView({
   // Grab the camera and turn it; two fingers pinch to zoom.
   const grabStage = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('button, a, input, .orbit-key'))
+    if (
+      (event.target as HTMLElement).closest(
+        'button, a, input, select, .orbit-key, .orbit-side',
+      )
+    )
       return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Not an active pointer (synthetic events): no capture, still usable.
+    }
+    press.current = {
+      x: event.clientX,
+      y: event.clientY,
+      at: performance.now(),
+    };
     pointers.current.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY,
@@ -397,7 +650,22 @@ export function OrbitView({
   };
   const moveStage = (event: ReactPointerEvent<HTMLDivElement>) => {
     const previous = pointers.current.get(event.pointerId);
-    if (!previous) return;
+    if (!previous) {
+      // Hovering: the frame loop picks the satellite under the pointer.
+      if (event.pointerType !== 'mouse') return;
+      if ((event.target as HTMLElement).closest('.orbit-key, .orbit-side')) {
+        hover.current = null;
+      } else {
+        const box = event.currentTarget.getBoundingClientRect();
+        hover.current = {
+          x: event.clientX - box.left,
+          y: event.clientY - box.top,
+        };
+        void ensureCatalog();
+      }
+      invalidate.current();
+      return;
+    }
     const next = { x: event.clientX, y: event.clientY };
     pointers.current.set(event.pointerId, next);
     if (pointers.current.size === 2) {
@@ -420,8 +688,34 @@ export function OrbitView({
     };
   };
   const releaseStage = (event: ReactPointerEvent<HTMLDivElement>) => {
-    pointers.current.delete(event.pointerId);
+    const wasDown = pointers.current.delete(event.pointerId);
     pinch.current = null;
+    // A short press without movement is a click: select what is under it.
+    const down = press.current;
+    press.current = null;
+    if (
+      wasDown &&
+      down &&
+      event.type === 'pointerup' &&
+      pointers.current.size === 0 &&
+      Math.hypot(event.clientX - down.x, event.clientY - down.y) < 5 &&
+      performance.now() - down.at < 500
+    ) {
+      const box = event.currentTarget.getBoundingClientRect();
+      const index =
+        sceneRef.current?.pick(
+          event.clientX - box.left,
+          event.clientY - box.top,
+          event.pointerType === 'mouse' ? 14 : 26,
+        ) ?? -1;
+      if (index < 0) select(null);
+      else
+        void ensureCatalog().then(
+          (loaded) => loaded && select(loaded.entries[index]),
+        );
+      spin.current = { azimuth: 0, elevation: 0, at: 0 };
+      return;
+    }
     // A pause before letting go means no spin.
     if (reducedMotion() || performance.now() - spin.current.at > 90)
       spin.current = { azimuth: 0, elevation: 0, at: 0 };
@@ -510,7 +804,11 @@ export function OrbitView({
       else if (event.key === '+' || event.key === '=') zoomBy(1 / 1.25);
       else if (event.key === '-' || event.key === '_') zoomBy(1.25);
       else if (event.key === '?') setHelp(true);
-      else return;
+      else if (event.key === 'Escape') {
+        if (passesOpen) setPassesOpen(false);
+        else if (selectedRef.current) select(null);
+        else return;
+      } else return;
       event.preventDefault();
     };
     window.addEventListener('keydown', listener);
@@ -634,8 +932,28 @@ export function OrbitView({
         recent: weights.highlight * ramp(introAt, 0.85, 1),
         halo: weights.halo * ramp(introAt, 0.5, 0.75),
         bloom: weights.bloom * 0.9,
+        selected: selection.current,
+        hovered: hovered.current,
+        insetRight: insetRight.current,
       };
       scene?.render(view, reduced.matches ? 0 : now, text.current);
+      // What is under the mouse, for the next frame: the scene picks from the
+      // positions it has just drawn.
+      const point = hover.current;
+      const index =
+        scene && point && pointers.current.size === 0
+          ? scene.pick(point.x, point.y)
+          : -1;
+      const label =
+        index >= 0 ? (catalogRef.current?.entries[index]?.name ?? '') : '';
+      if (
+        index !== (hovered.current?.index ?? -1) ||
+        label !== (hovered.current?.label ?? '')
+      ) {
+        hovered.current = index >= 0 ? { index, label } : null;
+        box.dataset.hover = index >= 0 ? 'satellite' : '';
+        loop.invalidate();
+      }
       if (settling || !opening.done || turn.azimuth || turn.elevation)
         loop.invalidate();
 
@@ -719,6 +1037,14 @@ export function OrbitView({
       box.insertBefore(next.canvas, next.overlay);
       next.rebuilt.add(rebuilt);
       rebuilt();
+      fleetRef.current = next.fleet;
+      setFleet(next.fleet);
+      // A linked satellite is selected once the catalogue is in.
+      if (shared.norad)
+        void ensureCatalog().then((loaded) => {
+          const entry = loaded?.byNorad.get(shared.norad ?? 0);
+          if (entry) select(entry);
+        });
       setCounts(next.counts);
       setFetched(next.fetched);
       setStatus('ready');
@@ -738,8 +1064,19 @@ export function OrbitView({
         if (!disposed)
           setStatus(orbitStageUnsupported() ? 'unsupported' : 'failed');
       });
-    const observer = new ResizeObserver(resize);
+    // Panels docked on the right push the lunar close-up left.
+    const measureSide = () => {
+      const panel = side.current;
+      insetRight.current =
+        panel && box.clientWidth > 760 ? panel.offsetWidth + 12 : 0;
+      loop.invalidate();
+    };
+    const observer = new ResizeObserver(() => {
+      resize();
+      measureSide();
+    });
     observer.observe(box);
+    if (side.current) observer.observe(side.current);
     observer.observe(ruler);
     // Sideways trackpad swipes (or shift + wheel) scroll the tape.
     const tapeWheel = (event: WheelEvent) => {
@@ -762,7 +1099,8 @@ export function OrbitView({
     };
     // The wheel (and trackpad pinch, which arrives as ctrl + wheel) zooms.
     const stageWheel = (event: WheelEvent) => {
-      if ((event.target as HTMLElement).closest('.orbit-key')) return;
+      if ((event.target as HTMLElement).closest('.orbit-key, .orbit-side'))
+        return;
       event.preventDefault();
       const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
       intro.current.done = true;
@@ -783,7 +1121,7 @@ export function OrbitView({
       box.removeEventListener('wheel', stageWheel);
       detach();
     };
-  }, [anchor]);
+  }, [anchor, shared]);
 
   const presets = [
     {
@@ -830,6 +1168,10 @@ export function OrbitView({
         onPointerMove={moveStage}
         onPointerUp={releaseStage}
         onPointerCancel={releaseStage}
+        onPointerLeave={() => {
+          hover.current = null;
+          invalidate.current();
+        }}
       >
         <LayerPanel
           lang={lang}
@@ -841,6 +1183,36 @@ export function OrbitView({
           onToggle={toggleLayer}
         />
         <Freshness lang={lang} />
+        <div className="orbit-side" ref={side}>
+          <SearchBox
+            lang={lang}
+            catalog={catalog}
+            onOpen={() => void ensureCatalog()}
+            onPick={select}
+          />
+          {selected && fleet && (
+            <InfoCard
+              lang={lang}
+              entry={selected}
+              fleet={fleet}
+              precise={model}
+              simTime={simTime}
+              onClose={() => select(null)}
+              onPasses={() => setPassesOpen(true)}
+            />
+          )}
+          {passesOpen && fleet && (
+            <PassPanel
+              lang={lang}
+              fleet={fleet}
+              catalog={catalog}
+              selected={selected}
+              simTime={simTime}
+              onClose={() => setPassesOpen(false)}
+              onPlay={playPass}
+            />
+          )}
+        </div>
         {status === 'unsupported' && <Fallback lang={lang} />}
         {status === 'failed' && (
           <p className="orbit-fallback">
@@ -915,6 +1287,31 @@ export function OrbitView({
             />
           </div>
           <output ref={readout} className="orbit-clock" />
+          <button
+            type="button"
+            className="orbit-icon-button"
+            aria-label={t('Visible passes', '可见过境预报')}
+            title={t('Visible passes over you', '你所在地的可见过境')}
+            aria-pressed={passesOpen}
+            onClick={() => {
+              void ensureCatalog();
+              setPassesOpen((open) => !open);
+            }}
+          >
+            <Telescope size={15} />
+          </button>
+          <button
+            type="button"
+            className="orbit-icon-button"
+            aria-label={t('Copy a link to this view', '复制当前视图的链接')}
+            title={t('Share this view', '分享当前视图')}
+            onClick={share}
+          >
+            <Link2 size={15} />
+          </button>
+          {shareNote && (
+            <output className="orbit-share-note">{shareNote}</output>
+          )}
           <button
             type="button"
             className="orbit-help-button"
