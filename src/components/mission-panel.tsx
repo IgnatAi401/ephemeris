@@ -1,5 +1,13 @@
 import type { CSSProperties } from 'react';
-import { Clapperboard, Crosshair, Globe2, Moon, Rocket, X } from 'lucide-react';
+import {
+  Clapperboard,
+  Crosshair,
+  Globe2,
+  Moon,
+  Orbit,
+  Rocket,
+  X,
+} from 'lucide-react';
 import type { Language } from '@/lib/i18n';
 import {
   FRAMES,
@@ -8,15 +16,38 @@ import {
   type Mission,
   type Shot,
 } from '@/lib/missions';
+import { bodyByKey } from '@/lib/planets';
 
-export type Telemetry = 'tplus' | 'earth' | 'moon' | 'speed';
+/** A frame's name: fixed ones, or "Jupiter-centred" for a body's. */
+function frameName(id: FrameId) {
+  const body = bodyByKey(id);
+  return (
+    FRAMES[id] ?? {
+      en: `${body?.en ?? id}-centred`,
+      zh: `${body?.zh ?? id}中心`,
+    }
+  );
+}
 
-/** "T+3 d 04:12" (or "T−…" before launch). */
+/** Readouts the frame loop writes: around the Sun, `earth` holds the
+ * distance from the Sun (or a nearby planet, named by `nearLabel`) and
+ * `moon` the distance from Earth with the signal's light time. */
+export type Telemetry = 'tplus' | 'earth' | 'moon' | 'speed' | 'nearLabel';
+
+/** "T+3 d 04:12" (or "T−…" before launch); years once past a thousand
+ * days. */
 export function tPlus(time: number, launch: number, lang: Language) {
   const delta = time - launch;
   const sign = delta < 0 ? '−' : '+';
   const total = Math.floor(Math.abs(delta) / 60000);
   const days = Math.floor(total / 1440);
+  if (days >= 1000) {
+    const years = Math.floor(days / 365.25);
+    const rest = Math.floor(days - years * 365.25);
+    return lang === 'en'
+      ? `T${sign}${years} y ${rest} d`
+      : `T${sign}${years} 年 ${rest} 天`;
+  }
   const hours = Math.floor((total % 1440) / 60);
   const minutes = total % 60;
   const clock = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
@@ -38,6 +69,7 @@ export function MissionPanel({
   frame,
   autopilot,
   shot,
+  focus,
   telemetry,
   onPick,
   onExit,
@@ -57,6 +89,8 @@ export function MissionPanel({
   frame: FrameId;
   autopilot: boolean;
   shot: Shot['aim'] | null;
+  /** The body the "body" shot looks at (the Moon or a planet). */
+  focus: string;
   /** Receives the elements the frame loop writes the live readouts into. */
   telemetry: (key: Telemetry) => (element: HTMLElement | null) => void;
   onPick: (mission: Mission) => void;
@@ -97,25 +131,37 @@ export function MissionPanel({
             '轨迹来自 JPL 的实测重建数据。选一个任务重新飞一遍，拖动下方时间轴可以浏览全程。',
           )}
         </p>
-        <ul className="orbit-mission-list">
-          {MISSIONS.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                onClick={() => onPick(item)}
-                disabled={loading !== null}
-                style={{ '--dot': item.color } as CSSProperties}
-              >
-                <i aria-hidden="true" />
-                <strong>{pick(item)}</strong>
-                <small>{pick(item.tagline)}</small>
-                <span>
-                  {loading === item.id ? t('Loading…', '加载中…') : item.agency}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        {[
+          { helio: false, en: 'Earth and Moon', zh: '地月空间' },
+          { helio: true, en: 'Across the solar system', zh: '行星际' },
+        ].map((group) => (
+          <div key={group.en}>
+            <h3 className="orbit-mission-group">{t(group.en, group.zh)}</h3>
+            <ul className="orbit-mission-list">
+              {MISSIONS.filter(
+                (item) => (item.kind === 'helio') === group.helio,
+              ).map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    onClick={() => onPick(item)}
+                    disabled={loading !== null}
+                    style={{ '--dot': item.color } as CSSProperties}
+                  >
+                    <i aria-hidden="true" />
+                    <strong>{pick(item)}</strong>
+                    <small>{pick(item.tagline)}</small>
+                    <span>
+                      {loading === item.id
+                        ? t('Loading…', '加载中…')
+                        : item.agency}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
         {failed && (
           <p className="orbit-type-none">
             {t(
@@ -129,14 +175,25 @@ export function MissionPanel({
 
   const current = mission.phases[Math.max(0, phase)];
   const launch = Date.parse(mission.launch);
+  const helio = mission.kind === 'helio';
+  // Around the Sun the body shot finds the planet nearest the spacecraft;
+  // while it looks at one, the button names it.
+  const focused = bodyByKey(focus);
   const shots: {
     aim: Shot['aim'];
     Icon: typeof Globe2;
     en: string;
     zh: string;
   }[] = [
-    { aim: 'earth', Icon: Globe2, en: 'Whole path', zh: '全程' },
-    { aim: 'moon', Icon: Moon, en: 'Moon', zh: '月球' },
+    { aim: 'path', Icon: Globe2, en: 'Whole path', zh: '全程' },
+    helio
+      ? {
+          aim: 'body',
+          Icon: Orbit,
+          en: shot === 'body' && focused ? focused.en : 'Nearest planet',
+          zh: shot === 'body' && focused ? focused.zh : '最近行星',
+        }
+      : { aim: 'body', Icon: Moon, en: 'Moon', zh: '月球' },
     { aim: 'craft', Icon: Crosshair, en: 'Spacecraft', zh: '飞行器' },
   ];
   return (
@@ -168,15 +225,25 @@ export function MissionPanel({
           <dd ref={telemetry('tplus')} />
         </div>
         <div>
-          <dt>{t('Speed (vs Earth)', '速度（相对地球）')}</dt>
+          <dt>
+            {helio
+              ? t('Speed (vs Sun)', '速度（相对太阳）')
+              : t('Speed (vs Earth)', '速度（相对地球）')}
+          </dt>
           <dd ref={telemetry('speed')} />
         </div>
         <div>
-          <dt>{t('Above Earth', '距地面')}</dt>
+          <dt ref={helio ? telemetry('nearLabel') : undefined}>
+            {helio ? t('From the Sun', '距太阳') : t('Above Earth', '距地面')}
+          </dt>
           <dd ref={telemetry('earth')} />
         </div>
         <div>
-          <dt>{t('Above the Moon', '距月面')}</dt>
+          <dt>
+            {helio
+              ? t('From Earth · light time', '距地球 · 光信号')
+              : t('Above the Moon', '距月面')}
+          </dt>
           <dd ref={telemetry('moon')} />
         </div>
       </dl>
@@ -228,7 +295,7 @@ export function MissionPanel({
                   aria-pressed={frame === id}
                   onClick={() => onFrame(id)}
                 >
-                  {pick(FRAMES[id])}
+                  {pick(frameName(id))}
                 </button>
               ))}
             </div>

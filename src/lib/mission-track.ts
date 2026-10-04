@@ -1,17 +1,37 @@
 // A mission's trajectory (public/missions/<id>.json, see
-// scripts/fetch-missions.mjs): thinned geocentric state vectors for each
-// spacecraft and three-hourly ones for the Moon, interpolated with cubic
-// Hermite splines. Everything handed to the scene is in Earth radii.
+// scripts/fetch-missions.mjs), interpolated with cubic Hermite splines.
+// Earth–Moon missions: thinned geocentric state vectors for each spacecraft
+// and three-hourly ones for the Moon. Interplanetary missions: heliocentric
+// vectors for the spacecraft and for every body they meet (the other planets
+// come from mean elements, lib/planets.ts). Everything handed to the scene is
+// in Earth radii, around Earth or the Sun respectively.
 import { EARTH_RADIUS_KM, sunDirection } from '@/lib/orbits';
 import type { FrameId, MissionId } from '@/lib/missions';
+import {
+  BODIES,
+  ECLIPTIC_AXES,
+  bodyByKey,
+  meanPosition,
+  type BodyKey,
+} from '@/lib/planets';
 
 type Vec3 = [number, number, number];
-type TrackFile = {
-  start: number;
-  stop: number;
-  craft: { key: string; t: number[]; s: number[] }[];
-  moon: { start: number; step: number; s: number[] };
-};
+type Series = { key: string; t: number[]; s: number[] };
+type TrackFile =
+  | {
+      kind?: 'geo';
+      start: number;
+      stop: number;
+      craft: Series[];
+      moon: { start: number; step: number; s: number[] };
+    }
+  | {
+      kind: 'helio';
+      start: number;
+      stop: number;
+      craft: Series[];
+      bodies: Series[];
+    };
 const KM = 1 / EARTH_RADIUS_KM;
 // The Moon's mean distance, Earth radii: the Earth–Moon rotating frame
 // scales every distance by this over the Moon's distance at the time, so
@@ -59,10 +79,52 @@ export type CraftTrack = {
   key: string;
   start: number;
   stop: number;
-  /** Geocentric position (Earth radii) and, optionally, velocity (km/s) at
-   * `time`; false outside the track. */
+  /** Position (Earth radii, around Earth or the Sun) and, optionally,
+   * velocity (km/s) at `time`; false outside the track. */
   at: (time: number, out: number[], velocity?: number[]) => boolean;
 };
+
+/** A thinned series of state vectors, interpolated. */
+function series(start: number, { key, t, s }: Series): CraftTrack {
+  const times = Float64Array.from(t, (value) => start + value * 1000);
+  const states = Float64Array.from(s);
+  const first = times[0];
+  const last = times[times.length - 1];
+  let hint = 0;
+  return {
+    key,
+    start: first,
+    stop: last,
+    at(time, out, velocity) {
+      if (!(time >= first && time <= last)) return false;
+      // Frames ask for nearby times in turn: start from the last interval.
+      let index = hint;
+      if (!(times[index] <= time && time <= times[index + 1])) {
+        let lo = 0;
+        let hi = times.length - 1;
+        while (hi - lo > 1) {
+          const middle = (lo + hi) >> 1;
+          if (times[middle] <= time) lo = middle;
+          else hi = middle;
+        }
+        index = lo;
+        hint = lo;
+      }
+      const h = (times[index + 1] - times[index]) / 1000;
+      hermite(
+        states,
+        index * 6,
+        index * 6 + 6,
+        h,
+        (time - times[index]) / (times[index + 1] - times[index]),
+        out,
+        velocity,
+      );
+      for (let axis = 0; axis < 3; axis++) out[axis] *= KM;
+      return true;
+    },
+  };
+}
 
 export type MissionTrack = ReturnType<typeof createTrack>;
 
@@ -84,59 +146,27 @@ export function loadMissionTrack(id: MissionId) {
 }
 
 function createTrack(file: TrackFile) {
-  const craft: CraftTrack[] = file.craft.map(({ key, t, s }) => {
-    const times = Float64Array.from(t, (value) => file.start + value * 1000);
-    const states = Float64Array.from(s);
-    const first = times[0];
-    const last = times[times.length - 1];
-    let hint = 0;
-    return {
-      key,
-      start: first,
-      stop: last,
-      at(time, out, velocity) {
-        if (!(time >= first && time <= last)) return false;
-        // Frames ask for nearby times in turn: start from the last interval.
-        let index = hint;
-        if (!(times[index] <= time && time <= times[index + 1])) {
-          let lo = 0;
-          let hi = times.length - 1;
-          while (hi - lo > 1) {
-            const middle = (lo + hi) >> 1;
-            if (times[middle] <= time) lo = middle;
-            else hi = middle;
-          }
-          index = lo;
-          hint = lo;
-        }
-        const h = (times[index + 1] - times[index]) / 1000;
-        hermite(
-          states,
-          index * 6,
-          index * 6 + 6,
-          h,
-          (time - times[index]) / (times[index + 1] - times[index]),
-          out,
-          velocity,
-        );
-        for (let axis = 0; axis < 3; axis++) out[axis] *= KM;
-        return true;
-      },
-    };
-  });
+  const craft = file.craft.map((item) => series(file.start, item));
+  const helio = file.kind === 'helio';
 
-  const moonStates = Float64Array.from(file.moon.s);
-  const moonStep = file.moon.step * 1000;
+  const moonFile = file.kind === 'helio' ? null : file.moon;
+  const moonStates = Float64Array.from(moonFile?.s ?? [0, 0, 0, 0, 0, 0]);
+  const moonStep = (moonFile?.step ?? 1) * 1000;
   const moonCount = moonStates.length / 6;
-  /** The Moon (Earth radii; velocity in km/s), clamped to the data. */
+  /** The Moon (Earth radii; velocity in km/s), clamped to the data; Earth's
+   * centre in a heliocentric mission, which has no Moon of its own. */
   const moon = (time: number, out: number[], velocity?: number[]) => {
-    const u = (time - file.moon.start) / moonStep;
+    if (!moonFile) {
+      body('earth', time, out);
+      return out;
+    }
+    const u = (time - moonFile.start) / moonStep;
     const index = Math.min(moonCount - 2, Math.max(0, Math.floor(u)));
     hermite(
       moonStates,
       index * 6,
       index * 6 + 6,
-      file.moon.step,
+      moonFile.step,
       Math.min(1, Math.max(0, u - index)),
       out,
       velocity,
@@ -145,11 +175,43 @@ function createTrack(file: TrackFile) {
     return out;
   };
 
+  // Heliocentric missions: the bodies met, exact; the rest from mean
+  // elements.
+  const met = new Map(
+    (file.kind === 'helio' ? file.bodies : []).map((item) => [
+      item.key,
+      series(file.start, item),
+    ]),
+  );
+  /** Heliocentric position of `key` (Earth radii); false if unknown. A
+   * geocentric mission knows only Earth (the origin) and the Moon. */
+  const body = (key: string, time: number, out: number[]) => {
+    if (!helio) {
+      if (key === 'moon') {
+        moon(time, out);
+        return true;
+      }
+      out[0] = out[1] = out[2] = 0;
+      return key === 'earth';
+    }
+    if (met.get(key)?.at(time, out)) return true;
+    const known = bodyByKey(key);
+    if (!known || !meanPosition(known, time, out)) return false;
+    for (let axis = 0; axis < 3; axis++) out[axis] *= KM;
+    return true;
+  };
+
   /** Origin, axes and scale of `frame` at `time`: a point's local
    * coordinates are its offset from the origin along the axes, times the
    * scale. */
   const basis = (frame: FrameId, time: number): Basis => {
     const origin: Vec3 = [0, 0, 0];
+    // Around the Sun everything is measured in ecliptic axes, from the Sun
+    // or from the body the frame is named after.
+    if (helio) {
+      if (frame !== 'sun') body(frame, time, origin);
+      return { origin, axes: ECLIPTIC_AXES, scale: 1 };
+    }
     if (frame === 'earth') return { origin, axes: IDENTITY, scale: 1 };
     if (frame === 'moon') {
       moon(time, origin);
@@ -172,30 +234,35 @@ function createTrack(file: TrackFile) {
   };
 
   /** Times along each craft's path, close enough that straight segments
-   * look smooth: tighter near Earth and the Moon, and at least every three
-   * hours so rotating frames bend the path too. */
+   * look smooth: about 3° of arc around whatever is nearest (Earth or the
+   * Moon; the Sun or a body met), and at least every three hours (ten days
+   * around the Sun) so rotating frames bend the path too. */
+  const longest = helio ? 240 * HOUR : 3 * HOUR;
+  const centres = helio ? [...met.keys()] : ['moon'];
   const samples = craft.map((track) => {
     const times: number[] = [];
     const here = [0, 0, 0];
     const velocity = [0, 0, 0];
-    const moonAt = [0, 0, 0];
+    const other = [0, 0, 0];
     let time = track.start;
     while (time < track.stop) {
       times.push(time);
       track.at(time, here, velocity);
-      moon(time, moonAt);
-      const near = Math.min(
-        Math.hypot(here[0], here[1], here[2]),
-        Math.hypot(
-          here[0] - moonAt[0],
-          here[1] - moonAt[1],
-          here[2] - moonAt[2],
-        ),
-      );
+      let near = Math.hypot(here[0], here[1], here[2]);
+      for (const key of centres) {
+        body(key, time, other);
+        near = Math.min(
+          near,
+          Math.hypot(
+            here[0] - other[0],
+            here[1] - other[1],
+            here[2] - other[2],
+          ),
+        );
+      }
       const speed = Math.hypot(velocity[0], velocity[1], velocity[2]) * KM;
-      // About 3° of arc around whatever is nearer.
       const step = Math.min(
-        3 * HOUR,
+        longest,
         Math.max(10000, ((near * 0.05) / Math.max(speed, 1e-9)) * 1000),
       );
       time = Math.min(track.stop, time + step);
@@ -222,10 +289,18 @@ function createTrack(file: TrackFile) {
   };
 
   return {
+    helio,
     start: Math.min(...craft.map((track) => track.start)),
     stop: Math.max(...craft.map((track) => track.stop)),
     craft,
     moon,
+    body,
+    /** Keys of the bodies the mission's file covers. */
+    met: [...met.keys()] as BodyKey[],
+    /** Bodies drawn in the heliocentric view. */
+    bodies: helio
+      ? BODIES.filter((item) => item.elements || met.has(item.key))
+      : [],
     basis,
     /** Sample times of craft `index`'s drawn path. */
     times: (index: number) => samples[index],

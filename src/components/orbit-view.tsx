@@ -85,6 +85,7 @@ import {
   type OrbitTypeId,
 } from '@/lib/orbit-types';
 import { basis, focalLength, frameHalf } from '@/lib/scene-camera';
+import { AU_KM, bodyByKey } from '@/lib/planets';
 
 type Preset = 'leo' | 'gnss' | 'moon' | 'deep';
 type Focus = Preset | 'overview';
@@ -123,7 +124,7 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 0,
     fitMoon: 0,
-    aimMoon: 0,
+    aimBody: 0,
     aimCraft: 0,
     aimX: 0,
     aimY: 0,
@@ -141,7 +142,7 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 0,
     fitMoon: 0,
-    aimMoon: 0,
+    aimBody: 0,
     aimCraft: 0,
     aimX: 0,
     aimY: 0,
@@ -159,7 +160,7 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 0,
     fitMoon: 0,
-    aimMoon: 0,
+    aimBody: 0,
     aimCraft: 0,
     aimX: 0,
     aimY: 0,
@@ -177,7 +178,7 @@ const POSES: Record<Focus, Pose> = {
     deep: 0,
     lunar: 1,
     fitMoon: 1,
-    aimMoon: 0,
+    aimBody: 0,
     aimCraft: 0,
     aimX: 0,
     aimY: 0,
@@ -195,7 +196,7 @@ const POSES: Record<Focus, Pose> = {
     deep: 1,
     lunar: 0,
     fitMoon: 0,
-    aimMoon: 0,
+    aimBody: 0,
     aimCraft: 0,
     aimX: 0,
     aimY: 0,
@@ -245,8 +246,20 @@ const MISSION_SPEEDS = [
   { value: 21600, en: '6 h/s', zh: '6时/秒' },
   { value: 86400, en: '1 d/s', zh: '1天/秒' },
 ];
-// Closest the camera may come in a mission (the lunar landing).
+// Around the Sun, from a minute (a landing) to a year of flight per second.
+const HELIO_SPEEDS = [
+  { value: 60, en: '1 min/s', zh: '1分/秒' },
+  { value: 3600, en: '1 h/s', zh: '1时/秒' },
+  { value: 86400, en: '1 d/s', zh: '1天/秒' },
+  { value: 604800, en: '1 wk/s', zh: '1周/秒' },
+  { value: 2629800, en: '1 mo/s', zh: '1月/秒' },
+  { value: 31557600, en: '1 yr/s', zh: '1年/秒' },
+];
+// Closest the camera may come in a mission (the lunar landing), and how far
+// out it may go around the Sun (beyond Voyager 1, ~170 AU).
 const MISSION_ZOOM_MIN = 0.3;
+const HELIO_ZOOM_MAX = 1.2e7;
+const AU_RE = AU_KM / EARTH_RADIUS_KM;
 const DEFAULT_SPEED = 60;
 const DAY = 86400000;
 const SPAN = 14 * DAY;
@@ -608,7 +621,10 @@ export function OrbitView({
     event: number;
     /** Fade of the mission drawing, 0–1. */
     weight: number;
+    /** The body "body" shots look at (SceneView.aimBody). */
+    focus: string;
   } | null>(null);
+  const [focusBodyKey, setFocusBody] = useState('moon');
   const telemetryRefs = useRef<Partial<Record<Telemetry, HTMLElement | null>>>(
     {},
   );
@@ -960,7 +976,10 @@ export function OrbitView({
     if (replay?.autopilot) setMissionAutopilot(false);
     pose.zoom = Math.max(
       replay ? MISSION_ZOOM_MIN : ZOOM_RANGE[0],
-      Math.min(ZOOM_RANGE[1], pose.zoom * factor),
+      Math.min(
+        replay?.track.helio ? HELIO_ZOOM_MAX : ZOOM_RANGE[1],
+        pose.zoom * factor,
+      ),
     );
     invalidate.current();
   };
@@ -1022,47 +1041,147 @@ export function OrbitView({
     const usableX = Math.max(160, width - room.right - 48) / 2;
     const usableY = Math.max(120, height - room.bottom - 48) / 2;
     const half = frameHalf(width, height);
-    const cx = (left + rightmost) / 2;
-    const cy = (top + bottom) / 2;
-    const middle = [0, 1, 2].map((axis) => cx * right[axis] + cy * up[axis]);
-    // Keep the camera well back from every point of the path, or the near
-    // end of a path running toward it is blown up by perspective.
-    const reach = Math.max(
-      ...shown.map((point) =>
-        Math.hypot(
-          point[0] - middle[0],
-          point[1] - middle[1],
-          point[2] - middle[2],
-        ),
-      ),
+    const focal = focalLength(height);
+    const limit = track.helio ? HELIO_ZOOM_MAX : ZOOM_RANGE[1];
+    const { toward } = basis(from.elevation, from.azimuth);
+    // First guess from the extent across the screen plane, then a few
+    // rounds through the real perspective: project every point, rescale
+    // and recentre on what the camera would actually show. A path running
+    // toward the camera would otherwise spill out of the frame.
+    let aim = [0, 1, 2].map(
+      (axis) =>
+        ((left + rightmost) / 2) * right[axis] +
+        ((top + bottom) / 2) * up[axis],
     );
-    const zoom = Math.min(
-      ZOOM_RANGE[1],
-      Math.max(
-        1.2,
-        (((rightmost - left) / 2) * 1.12 * half) / usableX,
-        (((top - bottom) / 2) * 1.12 * half) / usableY,
-        (1.6 * reach * half) / focalLength(height),
-      ),
+    let zoom = Math.max(
+      1.2,
+      (((rightmost - left) / 2) * 1.12 * half) / usableX,
+      (((top - bottom) / 2) * 1.12 * half) / usableY,
     );
-    return { zoom, aim: middle };
+    for (let round = 0; round < 5; round++) {
+      const distance = (focal * zoom) / half;
+      const eye = aim.map((value, axis) => value + toward[axis] * distance);
+      let [minX, maxX, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity];
+      let behind = false;
+      for (const p of shown) {
+        const rel = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
+        const z = -(
+          rel[0] * toward[0] +
+          rel[1] * toward[1] +
+          rel[2] * toward[2]
+        );
+        if (z < distance * 0.05) {
+          behind = true;
+          break;
+        }
+        const x =
+          ((rel[0] * right[0] + rel[1] * right[1] + rel[2] * right[2]) *
+            focal) /
+          z;
+        const y =
+          ((rel[0] * up[0] + rel[1] * up[1] + rel[2] * up[2]) * focal) / z;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+      if (behind) {
+        zoom *= 2;
+        continue;
+      }
+      // Recentre (px at the aim's depth → Earth radii), then rescale.
+      const perPx = zoom / half;
+      aim = aim.map(
+        (value, axis) =>
+          value +
+          (((minX + maxX) / 2) * right[axis] + ((minY + maxY) / 2) * up[axis]) *
+            perPx,
+      );
+      zoom *=
+        Math.max((maxX - minX) / (2 * usableX), (maxY - minY) / (2 * usableY)) *
+        1.08;
+    }
+    return { zoom: Math.min(limit, Math.max(1.2, zoom)), aim };
   };
-  /** A sensible width for looking at the Moon or the spacecraft now. */
-  const shotZoom = (aim: 'moon' | 'craft') => {
+  /** The body a "body" shot looks at now: the phase's, else around the Sun
+   * the met body nearest the spacecraft, else the Moon. */
+  const focusBody = (wanted?: string) => {
+    const state = missionRef.current;
+    if (!state) return 'moon';
+    if (wanted) return wanted;
+    if (!state.track.helio) return 'moon';
+    const time = simTime();
+    const craft = [0, 0, 0];
+    const other = [0, 0, 0];
+    if (!state.track.craft.some((track) => track.at(time, craft)))
+      return state.focus;
+    let best = state.focus;
+    let nearest = Infinity;
+    for (const key of state.track.met) {
+      if (!state.track.body(key, time, other)) continue;
+      const distance = Math.hypot(
+        craft[0] - other[0],
+        craft[1] - other[1],
+        craft[2] - other[2],
+      );
+      if (distance < nearest) [best, nearest] = [key, distance];
+    }
+    return best;
+  };
+  /** Camera angles (in the frame's axes) looking down on the spacecraft
+   * from above the focus body, tipped 20° so its limb shows. */
+  const aboveCraft = (time: number) => {
+    const state = missionRef.current;
+    const craft = [0, 0, 0];
+    const body = [0, 0, 0];
+    if (
+      !state ||
+      !state.track.craft.some((track) => track.at(time, craft)) ||
+      !state.track.body(state.focus, time, body)
+    )
+      return {};
+    const axes = state.track.basis(state.frame, time).axes;
+    const out = craft.map((value, axis) => value - body[axis]);
+    const [x, y, z] = axes.map(
+      (axis) => axis[0] * out[0] + axis[1] * out[1] + axis[2] * out[2],
+    );
+    const length = Math.hypot(x, y, z) || 1;
+    return {
+      elevation: Math.max(
+        -ELEVATION_LIMIT,
+        Math.min(ELEVATION_LIMIT, Math.asin(z / length) - 20 * DEG),
+      ),
+      azimuth: Math.atan2(y, x),
+    };
+  };
+  /** A sensible width for looking at the focus body or the spacecraft now. */
+  const shotZoom = (aim: 'body' | 'craft') => {
     const state = missionRef.current;
     if (!state) return POSES.overview.zoom;
     const time = simTime();
     const craft = [0, 0, 0];
-    const moon = state.track.moon(time, [0, 0, 0]);
+    const body = [0, 0, 0];
+    state.track.body(state.focus, time, body);
     const lead = state.track.craft.find((track) => track.at(time, craft));
-    if (!lead) return aim === 'moon' ? 6 : 4;
-    const fromMoon = Math.hypot(
-      craft[0] - moon[0],
-      craft[1] - moon[1],
-      craft[2] - moon[2],
+    const fromBody = Math.hypot(
+      craft[0] - body[0],
+      craft[1] - body[1],
+      craft[2] - body[2],
     );
-    if (aim === 'moon') return Math.min(30, Math.max(0.6, fromMoon * 1.7));
-    return fromMoon < 3 ? 1.2 : Math.hypot(...craft) < 4 ? 3 : 6;
+    if (state.track.helio) {
+      const radius = (bodyByKey(state.focus)?.radius ?? 6378) / EARTH_RADIUS_KM;
+      if (!lead) return radius * 30;
+      if (aim === 'body')
+        return fromBody < radius * 3000
+          ? Math.max(radius * 4, fromBody * 1.7)
+          : radius * 30;
+      return fromBody < radius * 300
+        ? Math.max(radius * 3, fromBody * 2)
+        : 2000;
+    }
+    if (!lead) return aim === 'body' ? 6 : 4;
+    if (aim === 'body') return Math.min(30, Math.max(0.6, fromBody * 1.7));
+    return fromBody < 3 ? 1.2 : Math.hypot(...craft) < 4 ? 3 : 6;
   };
   /** The pose for a mission shot, keeping the camera's current angles:
    * `zoom` a width, or 'fit' for the whole path. The aim is nudged so the
@@ -1092,7 +1211,7 @@ export function OrbitView({
       lunar: 0,
       fitMoon: 0,
       deep: missionRef.current?.mission.lagrange ?? 0,
-      aimMoon: aim === 'moon' ? 1 : 0,
+      aimBody: aim === 'body' ? 1 : 0,
       aimCraft: aim === 'craft' ? 1 : 0,
       aimX: shift[0],
       aimY: shift[1],
@@ -1133,6 +1252,14 @@ export function OrbitView({
         ),
       ),
     );
+    // Around the Sun, look down from ecliptic north with the path running
+    // across the screen, its far end to the left: the planets' plane is the
+    // natural one, and a voyage outward is mostly a line.
+    if (track.helio)
+      return {
+        elevation: 40 * DEG,
+        azimuth: Math.atan2(mean[1], mean[0]) + Math.PI / 2,
+      };
     const [x, y, z] = thinnest(spread);
     // Either side of the plane is face-on: look from the north.
     const sign = z < 0 ? -1 : 1;
@@ -1170,6 +1297,8 @@ export function OrbitView({
           phase: -2,
           event: -2,
           weight: 0,
+          // Around the Sun the replay opens on Earth and pulls back.
+          focus: track.helio ? 'earth' : 'moon',
         };
         bounds.current = { min: track.start, max: track.stop };
         tapeScale.current =
@@ -1180,6 +1309,7 @@ export function OrbitView({
         setFrame(first);
         setAutopilot(auto);
         setShot(next.phases[0].shot.aim);
+        setFocusBody(track.helio ? 'earth' : 'moon');
         setPhase(0);
         setLastEvent(-1);
         setClock({
@@ -1188,15 +1318,15 @@ export function OrbitView({
           playing: auto && at === undefined,
           live: false,
         });
-        // Cut to the whole path seen square-on; the first phase's shot then
-        // glides in from there.
+        // Cut to the whole path seen square-on (around the Sun, to Earth
+        // close up); the first phase's shot then glides in from there.
         intro.current.done = true;
         spin.current = { azimuth: 0, elevation: 0, at: 0 };
+        const square = { ...POSES.overview, ...planeView(track, first) };
         tween.current = still(
-          shotPose('earth', 'fit', {
-            ...POSES.overview,
-            ...planeView(track, first),
-          }),
+          track.helio && auto
+            ? shotPose('body', 5, square)
+            : shotPose('path', 'fit', square),
         );
         invalidate.current();
       },
@@ -1243,11 +1373,18 @@ export function OrbitView({
     invalidate.current();
   };
   const chooseShot = (aim: Shot['aim']) => {
-    if (!missionRef.current) return;
+    const state = missionRef.current;
+    if (!state) return;
     setMissionAutopilot(false);
     setShot(aim);
+    if (aim === 'body') {
+      // The body nearest the spacecraft now, or the phase's own.
+      const step = state.mission.phases[Math.max(0, state.phase)];
+      state.focus = focusBody(state.track.helio ? undefined : step?.shot.body);
+      setFocusBody(state.focus);
+    }
     tweenTo(
-      shotPose(aim, aim === 'earth' ? 'fit' : shotZoom(aim), holdPose()),
+      shotPose(aim, aim === 'path' ? 'fit' : shotZoom(aim), holdPose()),
       1400,
     );
   };
@@ -1476,7 +1613,7 @@ export function OrbitView({
       // In a mission, 1–3 are its camera shots, 0 its autopilot and [ ] step
       // between events.
       if (replay && preset >= 0 && preset < 3)
-        chooseShot((['earth', 'moon', 'craft'] as const)[preset]);
+        chooseShot((['path', 'body', 'craft'] as const)[preset]);
       else if (replay && event.key === '0') setMissionAutopilot(true);
       else if (replay && (event.key === '[' || event.key === ']')) {
         const time = simTime();
@@ -1553,6 +1690,11 @@ export function OrbitView({
     const lunar = [0, 0, 0];
     const km = (value: number) =>
       `${Math.round(Math.max(0, value)).toLocaleString('en-US')} km`;
+    /** Kilometres up to a few million, then AU. */
+    const span = (value: number) => {
+      const au = value / AU_KM;
+      return au < 0.05 ? km(value) : `${au.toFixed(au < 10 ? 3 : 2)} AU`;
+    };
     const writeTelemetry = (
       replay: NonNullable<typeof missionRef.current>,
       time: number,
@@ -1570,6 +1712,47 @@ export function OrbitView({
       );
       if (!flying) {
         for (const key of ['earth', 'moon', 'speed'] as const) write(key, '—');
+        return;
+      }
+      if (replay.track.helio) {
+        // Around the Sun: its distance (or a planet's, when one is near),
+        // and Earth's with the light time a signal takes.
+        const zh = language === 'zh';
+        let nearest: string | null = null;
+        let gap = Infinity;
+        for (const key of replay.track.met) {
+          if (!replay.track.body(key, time, lunar)) continue;
+          const distance = Math.hypot(
+            lead[0] - lunar[0],
+            lead[1] - lunar[1],
+            lead[2] - lunar[2],
+          );
+          if (distance < gap) [nearest, gap] = [key, distance];
+        }
+        const near = nearest ? bodyByKey(nearest) : null;
+        if (near && gap < 0.3 * AU_RE) {
+          write('nearLabel', zh ? `距${near.zh}表面` : `Above ${near.en}`);
+          write('earth', span(gap * EARTH_RADIUS_KM - near.radius));
+        } else {
+          write('nearLabel', zh ? '距太阳' : 'From the Sun');
+          write('earth', span(Math.hypot(...lead) * EARTH_RADIUS_KM));
+        }
+        replay.track.body('earth', time, lunar);
+        const fromEarth =
+          Math.hypot(
+            lead[0] - lunar[0],
+            lead[1] - lunar[1],
+            lead[2] - lunar[2],
+          ) * EARTH_RADIUS_KM;
+        const seconds = fromEarth / 299792.458;
+        const light =
+          seconds < 60
+            ? `${Math.round(seconds)}${zh ? ' 秒' : ' s'}`
+            : seconds < 3600
+              ? `${Math.round(seconds / 60)}${zh ? ' 分' : ' min'}`
+              : `${Math.floor(seconds / 3600)}${zh ? ' 时 ' : ' h '}${Math.round((seconds % 3600) / 60)}${zh ? ' 分' : ' min'}`;
+        write('moon', `${span(fromEarth)} · ${light}`);
+        write('speed', `${Math.hypot(...velocity).toFixed(2)} km/s`);
         return;
       }
       replay.track.moon(time, lunar);
@@ -1688,13 +1871,21 @@ export function OrbitView({
             const step = active.phases[phaseIndex];
             changeFrame(step.frame ?? active.frames[0]);
             setShot(step.shot.aim);
+            if (step.shot.aim === 'body') {
+              replay.focus =
+                step.shot.body ?? (track.helio ? replay.focus : 'moon');
+              setFocusBody(replay.focus);
+            }
             tweenTo(
               shotPose(
                 step.shot.aim,
                 step.shot.zoom,
-                poseAt(tween.current, now),
+                step.shot.above
+                  ? { ...poseAt(tween.current, now), ...aboveCraft(time) }
+                  : poseAt(tween.current, now),
               ),
-              forced ? 2400 : 1800,
+              // Around the Sun the first pull-back crosses six decades.
+              forced ? (track.helio ? 5200 : 2400) : 1800,
             );
             if (
               clock.current.playing &&
@@ -1720,6 +1911,8 @@ export function OrbitView({
         missionView = {
           track,
           frame: replay.frame,
+          focus: replay.focus,
+          time,
           weight: replay.weight,
           craft: active.craft.map((item) => ({
             label: zh ? item.zh : item.en,
@@ -2072,6 +2265,7 @@ export function OrbitView({
               event={lastEvent}
               frame={frame}
               autopilot={autopilot}
+              focus={focusBodyKey}
               shot={shot}
               telemetry={telemetry}
               onPick={(next) => startMission(next)}
@@ -2162,19 +2356,21 @@ export function OrbitView({
           </button>
           <div className="orbit-speeds">
             {mission
-              ? MISSION_SPEEDS.map(({ value, en, zh }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={speed === value}
-                    onClick={() => {
-                      setMissionAutopilot(false);
-                      setClock({ speed: value, live: false, playing: true });
-                    }}
-                  >
-                    {t(en, zh)}
-                  </button>
-                ))
+              ? (mission.kind === 'helio' ? HELIO_SPEEDS : MISSION_SPEEDS).map(
+                  ({ value, en, zh }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={speed === value}
+                      onClick={() => {
+                        setMissionAutopilot(false);
+                        setClock({ speed: value, live: false, playing: true });
+                      }}
+                    >
+                      {t(en, zh)}
+                    </button>
+                  ),
+                )
               : SPEEDS.map((value) => (
                   <button
                     key={value}

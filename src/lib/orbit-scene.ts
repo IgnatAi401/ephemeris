@@ -32,6 +32,14 @@ import {
 } from '@/lib/ephemeris';
 import { orbitPoint, trueAnomaly, type Elements } from '@/lib/kepler';
 import type { MissionTrack } from '@/lib/mission-track';
+import {
+  AU_KM,
+  ECLIPTIC_AXES,
+  SUN_RADIUS_KM,
+  meanOrbit,
+  poleOf,
+  type Body,
+} from '@/lib/planets';
 import type { FrameId } from '@/lib/missions';
 import {
   basis,
@@ -48,6 +56,8 @@ import {
   brightFragment,
   compositeFragment,
   fullscreenVertex,
+  HELIO_BODIES,
+  helioFragment,
   pathFragment,
   pathVertex,
   pointFragment,
@@ -70,9 +80,10 @@ export type SceneView = {
    * `cameraAxes`, from their x axis); the Sun keeps its side of the frame
    * while Earth turns underneath. */
   azimuth: number;
-  /** What the camera looks at, as weights: 0 for both is Earth's centre;
-   * `aimMoon` 1 the Moon, `aimCraft` 1 the replayed mission's spacecraft. */
-  aimMoon: number;
+  /** What the camera looks at, as weights: 0 for both is Earth's centre
+   * (the Sun's around the Sun); `aimBody` 1 the replayed mission's body in
+   * focus (the Moon, or a planet), `aimCraft` 1 its spacecraft. */
+  aimBody: number;
   aimCraft: number;
   /** Added to the aim: Earth radii along `cameraAxes` (or the equatorial
    * axes without them). */
@@ -134,8 +145,12 @@ export type SceneView = {
 export type MissionView = {
   track: MissionTrack;
   frame: FrameId;
+  /** The body `aimBody` looks at: the Moon, or a planet around the Sun. */
+  focus: string;
   /** Fades the mission's drawing in, 0–1. */
   weight: number;
+  /** The moment shown (as SceneView.time). */
+  time: number;
   /** Label and colour per spacecraft, in track order. */
   craft: readonly { label: string; color: string }[];
   events: readonly { time: number; label: string }[];
@@ -357,12 +372,12 @@ export function createOrbitScene(
     cullFace: false,
     uniforms: {
       ...cameraUniforms(),
-      uOrigin: { value: [0, 0, 0] },
+      uOriginRel: { value: [0, 0, 0] },
       uAxes: { value: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
       uScale: { value: 1 },
       uNow: { value: 0 },
-      uMoonAt: { value: [0, 0, 0] },
-      uMoonR: { value: MOON_RADIUS },
+      uSphereA: { value: [0, 0, 0, 0] },
+      uSphereB: { value: [0, 0, 0, 0] },
       uColor: { value: [1, 1, 1] },
       uAlpha: { value: 1 },
     },
@@ -420,6 +435,37 @@ export function createOrbitScene(
   };
   const triangle = new Triangle(gl);
   const skyMesh = new Mesh(gl, { geometry: triangle, program: sky });
+  // The solar-system view: sky, Sun and planets in one pass.
+  const slots = (make: () => number[] | number) =>
+    Array.from({ length: HELIO_BODIES }, make);
+  const helio = new Program(gl, {
+    vertex: fullscreenVertex,
+    fragment: helioFragment,
+    ...passOptions,
+    uniforms: {
+      ...cameraUniforms(),
+      uGmst: { value: 0 },
+      uLand: { value: land },
+      uLandReady: { value: 0 },
+      uLights: { value: lights },
+      uNight: { value: 0 },
+      uMoon: { value: [0, 0, 1] },
+      uMoonLook: { value: [0, 0, 0] },
+      uMoonFrame: { value: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
+      uSunView: { value: [1, 0, 0] },
+      uSunDisc: { value: 0.011 },
+      uSunGlow: { value: 1 },
+      uBodyCount: { value: 0 },
+      uBody: { value: slots(() => [0, 0, 0, 0]) },
+      uBodyTrue: { value: slots(() => 0) },
+      uBodyColor: { value: slots(() => [0, 0, 0]) },
+      uBodyBand: { value: slots(() => [0, 0, 0]) },
+      uBodyLook: { value: slots(() => [0, 0, 0, 0]) },
+      uBodyPole: { value: slots(() => [0, 0, 1]) },
+      uBodySun: { value: slots(() => [1, 0, 0]) },
+    },
+  });
+  const helioMesh = new Mesh(gl, { geometry: triangle, program: helio });
   const insetMesh = new Mesh(gl, { geometry: triangle, program: inset });
 
   // Bloom: the scene renders into `scene`; its bright parts are blurred at
@@ -571,6 +617,7 @@ export function createOrbitScene(
   const setLand = (image: HTMLCanvasElement) => {
     upload(land, image);
     sky.uniforms.uLandReady.value = 1;
+    helio.uniforms.uLandReady.value = 1;
   };
   const setLights = (image: HTMLImageElement) => upload(lights, image);
 
@@ -596,9 +643,8 @@ export function createOrbitScene(
     mission: MissionView,
     craftNow: (number[] | null)[],
     frame: {
-      cam: Camera;
-      moon: readonly number[];
-      earthR: number;
+      /** Whether Earth, the Moon, the Sun or a planet hides a point. */
+      hidden: (p: readonly number[]) => boolean;
       time: number;
       screen: (p: readonly number[]) => [number, number];
       label: (
@@ -612,11 +658,8 @@ export function createOrbitScene(
     },
   ) => {
     if (!context) return;
-    const { cam, moon, earthR, time, screen, label, rgba } = frame;
+    const { hidden, time, screen, label, rgba } = frame;
     const { track, weight } = mission;
-    const hidden = (p: readonly number[]) =>
-      earthCover(cam, p, earthR) === 1 ||
-      earthCover(cam, p, MOON_RADIUS, moon) === 1;
     const point = [0, 0, 0];
     // Events on the lead spacecraft's path: done ones filled, the rest open.
     // Only the next event, and the last one for six hours, are labelled.
@@ -632,7 +675,7 @@ export function createOrbitScene(
     for (const at of craftNow) {
       if (!at) continue;
       const [x, y] = screen(at);
-      if (Number.isFinite(x + y)) labelled.push([x, y - 20]);
+      if (Number.isFinite(x + y)) labelled.push([x, y]);
     }
     mission.events.forEach((event, index) => {
       if (!lead.at(event.time, point)) return;
@@ -656,7 +699,7 @@ export function createOrbitScene(
       // Right by the spacecraft or another label, the name would collide:
       // the side panel lists it anyway.
       const crowded = labelled.some(
-        ([lx, ly]) => Math.abs(lx - x) < 120 && Math.abs(ly - y) < 18,
+        ([lx, ly]) => Math.abs(lx - x) < 120 && Math.abs(ly - y) < 26,
       );
       if ((index === next || recent) && !crowded) {
         label(event.label, x + 9, y + 14, (recent ? 0.75 : 0.95) * weight);
@@ -688,8 +731,329 @@ export function createOrbitScene(
     });
   };
 
+  /** Every spacecraft path of a mission, relative to the camera. */
+  const drawPaths = (
+    mission: MissionView,
+    shown: ReturnType<MissionTrack['basis']>,
+    originRel: number[],
+    sphereA: number[],
+    sphereB: number[],
+    into: RenderTarget | undefined,
+  ) => {
+    const { track, frame, weight } = mission;
+    const time = mission.time;
+    const u = path.uniforms;
+    u.uOriginRel.value = originRel;
+    u.uAxes.value = shown.axes.flatMap((axis) => [...axis]);
+    u.uScale.value = shown.scale;
+    u.uNow.value = (time - track.start) / 1000;
+    u.uSphereA.value = sphereA;
+    u.uSphereB.value = sphereB;
+    track.craft.forEach((craftTrack, index) => {
+      // A spacecraft that has not split off yet is not drawn.
+      if (time < craftTrack.start) return;
+      u.uColor.value = hex(mission.craft[index].color);
+      u.uAlpha.value = weight;
+      renderer.render({
+        scene: pathMesh(track, index, frame),
+        target: into,
+        clear: false,
+      });
+    });
+  };
+  const runBloom = (strength: number) => {
+    const halfSize = [post.half.width, post.half.height];
+    bright.uniforms.uTexel.value = [
+      1 / post.scene.width,
+      1 / post.scene.height,
+    ];
+    renderer.render({ scene: brightMesh, target: post.half });
+    // Two blur rounds, the second twice as wide.
+    for (const spread of [1, 2]) {
+      blur.uniforms.tMap.value = post.half.texture;
+      blur.uniforms.uStep.value = [spread / halfSize[0], 0];
+      renderer.render({ scene: blurMesh, target: post.swap });
+      blur.uniforms.tMap.value = post.swap.texture;
+      blur.uniforms.uStep.value = [0, spread / halfSize[1]];
+      renderer.render({ scene: blurMesh, target: post.half });
+    }
+    composite.uniforms.uStrength.value = strength;
+    renderer.render({ scene: compositeMesh });
+  };
+  /** A label on the overlay, kept inside the frame whatever its anchor. */
+  const labelAt = (
+    value: string,
+    x: number,
+    y: number,
+    opacity: number,
+    align: CanvasTextAlign = 'left',
+  ) => {
+    if (!context || opacity <= 0.01 || !Number.isFinite(x + y)) return;
+    const { width, height } = size;
+    context.font = `500 10px ${font}`;
+    const content = value.toUpperCase();
+    const span = context.measureText(content).width;
+    const start =
+      align === 'left' ? x : align === 'right' ? x - span : x - span / 2;
+    const shift =
+      Math.min(0, width - 10 - (start + span)) + Math.max(0, 10 - start);
+    context.textAlign = align;
+    context.fillStyle = `rgba(223, 218, 245, ${0.78 * opacity})`;
+    context.fillText(content, x + shift, Math.min(height - 8, Math.max(14, y)));
+  };
+  // Mean orbits of the planets, redrawn when the date moves a month.
+  const orbits = new Map<string, { at: number; points: number[][] }>();
+  const orbitOf = (body: Body, time: number) => {
+    const cached = orbits.get(body.key);
+    if (cached && Math.abs(cached.at - time) < 30 * DAY_MS)
+      return cached.points;
+    const points = meanOrbit(body, time, 240).map((p) =>
+      p.map((value) => value / EARTH_RADIUS_KM),
+    );
+    orbits.set(body.key, { at: time, points });
+    return points;
+  };
+
+  /** The solar-system view of an interplanetary mission: the Sun at the
+   * origin, planets ray-traced at their places, the spacecraft paths, the
+   * planets' orbits and names. Distances are in Earth radii as everywhere. */
+  const renderHelio = (
+    view: SceneView,
+    text: SceneText,
+    mission: MissionView,
+  ) => {
+    const { width, height, dpr } = size;
+    const { time } = view;
+    const { track } = mission;
+    const axes = view.cameraAxes ?? ECLIPTIC_AXES;
+    const local = basis(view.elevation, view.azimuth);
+    const map = (v: readonly number[]) =>
+      [0, 1, 2].map(
+        (i) => v[0] * axes[0][i] + v[1] * axes[1][i] + v[2] * axes[2][i],
+      ) as Vec3;
+    const orientation = {
+      toward: map(local.toward),
+      right: map(local.right),
+      up: map(local.up),
+    };
+    const { toward, right, up } = orientation;
+    const craftNow = track.craft.map((item) => {
+      const at = [0, 0, 0];
+      return item.at(time, at) ? at : null;
+    });
+    const lead = craftNow.find((at) => at !== null) ?? null;
+    const focus = [0, 0, 0];
+    track.body(mission.focus, time, focus);
+    const offset = [view.aimX, view.aimY, view.aimZ];
+    const target = [0, 1, 2].map(
+      (axis) =>
+        focus[axis] * view.aimBody +
+        (lead ? lead[axis] * view.aimCraft : 0) +
+        offset[0] * axes[0][axis] +
+        offset[1] * axes[1][axis] +
+        offset[2] * axes[2][axis],
+    );
+    if (!Number.isFinite(view.zoom) || view.zoom <= 0) return;
+    const cam = makeCamera(width, height, view.zoom, orientation, target);
+    camera = cam;
+    const eye = cam.position;
+    const rel = (p: readonly number[]) => [
+      p[0] - eye[0],
+      p[1] - eye[1],
+      p[2] - eye[2],
+    ];
+    const screen = (p: readonly number[]): [number, number] => {
+      const [x, y] = project(cam, p);
+      return [x, y];
+    };
+
+    // The bodies, far to near, each at least a couple of pixels across.
+    const shownBodies = track.bodies
+      .map((body) => {
+        const at = [0, 0, 0];
+        if (!track.body(body.key, time, at)) return null;
+        const offsetFromEye = rel(at);
+        const distance = Math.hypot(...offsetFromEye);
+        const radius = body.radius / EARTH_RADIUS_KM;
+        return {
+          body,
+          at,
+          rel: offsetFromEye,
+          distance,
+          radius,
+          drawn: Math.max(radius, (2.2 * distance) / cam.focal),
+        };
+      })
+      .filter((entry) => entry !== null)
+      .sort((a, b) => b.distance - a.distance)
+      .slice(-HELIO_BODIES);
+    for (const program of [helio, path]) {
+      const u = program.uniforms;
+      u.uSize.value = [width, height];
+      u.uDpr.value = dpr;
+      u.uCenter.value = cam.center;
+      u.uFocal.value = cam.focal;
+      u.uCam.value = eye;
+      u.uRight.value = right;
+      u.uUp.value = up;
+      u.uToward.value = toward;
+      u.uNear.value = cam.near;
+    }
+    const h = helio.uniforms;
+    h.uGmst.value = siderealAngle(time);
+    h.uNight.value = view.lights;
+    const sunDistance = Math.hypot(...eye);
+    const sunKm = SUN_RADIUS_KM / EARTH_RADIUS_KM;
+    h.uSunView.value = eye.map((value) => -value / sunDistance);
+    h.uSunDisc.value = Math.max(0.006, (1.15 * sunKm) / sunDistance);
+    const au = sunDistance / (AU_KM / EARTH_RADIUS_KM);
+    h.uSunGlow.value = Math.min(1, Math.max(0.03, 0.9 / (au * au)));
+    h.uBodyCount.value = shownBodies.length;
+    shownBodies.forEach((entry, slot) => {
+      const { body } = entry;
+      const length = Math.hypot(...entry.at) || 1;
+      h.uBody.value[slot] = [...entry.rel, entry.drawn];
+      h.uBodyTrue.value[slot] = entry.radius;
+      h.uBodyColor.value[slot] = hex(body.color);
+      h.uBodyBand.value[slot] = hex(body.band);
+      h.uBodyLook.value[slot] = [
+        body.bands,
+        body.contrast,
+        body.noise,
+        body.key === 'earth' ? 2 : body.rings ? 1 : 0,
+      ];
+      h.uBodyPole.value[slot] = poleOf(body);
+      h.uBodySun.value[slot] = entry.at.map((value) => -value / length);
+      if (body.key === 'earth') h.uEarthR.value = entry.drawn;
+    });
+
+    const bloom = view.bloom > 0.01;
+    const into = bloom ? post.scene : undefined;
+    renderer.render({ scene: helioMesh, target: into });
+    const focused = shownBodies.find(
+      (entry) => entry.body.key === mission.focus,
+    );
+    if (mission.weight > 0.01) {
+      const shown = track.basis(mission.frame, time);
+      drawPaths(
+        mission,
+        shown,
+        rel(shown.origin),
+        [...rel([0, 0, 0]), sunKm],
+        focused ? [...focused.rel, focused.drawn] : [0, 0, 0, 0],
+        into,
+      );
+    }
+    if (bloom) runBloom(view.bloom);
+
+    if (!context) return;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, width, height);
+    context.lineCap = 'round';
+    const rgba = (color: string, alpha: number) => {
+      const [r, g, b] = hex(color);
+      return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
+    };
+    const hidden = (p: readonly number[]) =>
+      earthCover(cam, p, sunKm) === 1 ||
+      (!!focused && earthCover(cam, p, focused.drawn, focused.at) === 1);
+
+    // The planets' orbits, faint.
+    context.lineWidth = 1;
+    for (const body of track.bodies) {
+      if (!body.elements) continue;
+      context.strokeStyle = rgba(body.color, 0.2);
+      context.beginPath();
+      let drawing = false;
+      for (const p of orbitOf(body, time)) {
+        const [x, y] = screen(p);
+        if (!Number.isFinite(x + y)) {
+          drawing = false;
+          continue;
+        }
+        if (drawing) context.lineTo(x, y);
+        else context.moveTo(x, y);
+        drawing = true;
+      }
+      context.stroke();
+    }
+    // Names beside the planets, nearest first; any that would overlap one
+    // already placed is dropped.
+    const placed: number[][] = [];
+    for (const entry of [...shownBodies].reverse()) {
+      const [x, y] = screen(entry.at);
+      if (!Number.isFinite(x + y) || x < -20 || x > width + 20) continue;
+      // Clear of the rings, for Saturn.
+      const px =
+        ((entry.body.rings ? 2.4 : 1) * entry.drawn * cam.focal) /
+        Math.max(entry.distance, 1e-9);
+      const name = text.zh ? entry.body.zh : entry.body.en;
+      const box = [
+        x + px + 6,
+        y - px * 0.5 - 14,
+        x + px + 70,
+        y - px * 0.5 + 2,
+      ];
+      if (
+        placed.some(
+          ([l, t, r, b]) =>
+            box[0] < r && box[2] > l && box[1] < b && box[3] > t,
+        )
+      )
+        continue;
+      placed.push(box);
+      labelAt(name, x + px + 6, y - px * 0.5 - 2, 0.85);
+    }
+    const [sx, sy] = screen([0, 0, 0]);
+    labelAt(text.zh ? '太阳' : 'Sun', sx + 12, sy - 12, 0.8);
+
+    if (mission.weight > 0.01)
+      drawMission(mission, craftNow, {
+        hidden,
+        time,
+        screen,
+        label: labelAt,
+        rgba,
+      });
+
+    // Scale bar on a 1–2–5 ladder, true at the target's distance: in AU
+    // once it reaches a tenth of one.
+    const kmPerPx = EARTH_RADIUS_KM / cam.scale;
+    const targetKm = kmPerPx * 90;
+    const inAu = targetKm > 0.05 * AU_KM;
+    const unit = inAu ? AU_KM : 1;
+    const magnitude = 10 ** Math.floor(Math.log10(targetKm / unit));
+    const step =
+      [1, 2, 5, 10].find(
+        (factor) => factor * magnitude >= targetKm / unit / 1.6,
+      )! * magnitude;
+    const barPx = (step * unit) / kmPerPx;
+    const bx = width - 18 - barPx;
+    const by = height - 18;
+    context.strokeStyle = 'rgba(223, 218, 245, 0.55)';
+    context.beginPath();
+    context.moveTo(bx, by - 4);
+    context.lineTo(bx, by);
+    context.lineTo(bx + barPx, by);
+    context.lineTo(bx + barPx, by - 4);
+    context.stroke();
+    labelAt(
+      inAu
+        ? `${Number(step.toPrecision(3))} AU`
+        : `${step.toLocaleString('en-US')} KM`,
+      bx + barPx,
+      by - 8,
+      0.8,
+      'right',
+    );
+  };
+
   const render = (view: SceneView, clock: number, text: SceneText) => {
     if (gl.isContextLost()) return;
+    if (view.mission?.track.helio) {
+      renderHelio(view, text, view.mission);
+      return;
+    }
     const { width, height, dpr } = size;
     const { time } = view;
     const sun = sunDirection(time) as Vec3;
@@ -726,7 +1090,7 @@ export function createOrbitScene(
     const offset = [view.aimX, view.aimY, view.aimZ];
     const target = [0, 1, 2].map(
       (axis) =>
-        moon[axis] * view.aimMoon +
+        moon[axis] * view.aimBody +
         (lead ? lead[axis] * view.aimCraft : 0) +
         (axes
           ? offset[0] * axes[0][axis] +
@@ -914,45 +1278,24 @@ export function createOrbitScene(
     if (mission && mission.weight > 0.01) {
       const { track, frame } = mission;
       const shown = track.basis(frame, time);
-      const u = path.uniforms;
-      u.uOrigin.value = [...shown.origin];
-      u.uAxes.value = shown.axes.flatMap((axis) => [...axis]);
-      u.uScale.value = shown.scale;
-      u.uNow.value = (time - track.start) / 1000;
-      u.uMoonAt.value = [...moon];
-      track.craft.forEach((craftTrack, index) => {
-        // A spacecraft that has not split off yet is not drawn.
-        if (time < craftTrack.start) return;
-        u.uColor.value = hex(mission.craft[index].color);
-        u.uAlpha.value = mission.weight;
-        renderer.render({
-          scene: pathMesh(track, index, frame),
-          target: into,
-          clear: false,
-        });
-      });
+      const relative = (p: readonly number[], radius: number) => [
+        p[0] - cam.position[0],
+        p[1] - cam.position[1],
+        p[2] - cam.position[2],
+        radius,
+      ];
+      drawPaths(
+        mission,
+        shown,
+        relative(shown.origin, 0).slice(0, 3),
+        relative([0, 0, 0], earthR),
+        relative(moon, MOON_RADIUS),
+        into,
+      );
     }
     if (lensWeight > 0.01)
       renderer.render({ scene: insetMesh, target: into, clear: false });
-    if (bloom) {
-      const halfSize = [post.half.width, post.half.height];
-      bright.uniforms.uTexel.value = [
-        1 / post.scene.width,
-        1 / post.scene.height,
-      ];
-      renderer.render({ scene: brightMesh, target: post.half });
-      // Two blur rounds, the second twice as wide.
-      for (const spread of [1, 2]) {
-        blur.uniforms.tMap.value = post.half.texture;
-        blur.uniforms.uStep.value = [spread / halfSize[0], 0];
-        renderer.render({ scene: blurMesh, target: post.swap });
-        blur.uniforms.tMap.value = post.swap.texture;
-        blur.uniforms.uStep.value = [0, spread / halfSize[1]];
-        renderer.render({ scene: blurMesh, target: post.half });
-      }
-      composite.uniforms.uStrength.value = view.bloom;
-      renderer.render({ scene: compositeMesh });
-    }
+    if (bloom) runBloom(view.bloom);
 
     if (!context) return;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1175,9 +1518,9 @@ export function createOrbitScene(
     }
     if (mission && mission.weight > 0.01)
       drawMission(mission, craftNow, {
-        cam,
-        moon,
-        earthR,
+        hidden: (p) =>
+          earthCover(cam, p, earthR) === 1 ||
+          earthCover(cam, p, MOON_RADIUS, moon) === 1,
         time,
         screen,
         label,

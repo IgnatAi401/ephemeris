@@ -4,20 +4,41 @@
 
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
-// Tick spacings to choose from, smallest first.
-const STEPS = [
-  10 * 60000,
-  30 * 60000,
-  HOUR,
-  3 * HOUR,
-  6 * HOUR,
-  12 * HOUR,
-  DAY,
-  2 * DAY,
-  7 * DAY,
-  14 * DAY,
-  28 * DAY,
+const MONTH = 30.44 * DAY;
+// Tick spacings to choose from, smallest first: fixed spans up to a fortnight,
+// then calendar months and years (a decades-long voyage needs both).
+type Step = { span: number; months?: number };
+const STEPS: Step[] = [
+  ...[10 * 60000, 30 * 60000, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR].map(
+    (span) => ({ span }),
+  ),
+  ...[DAY, 2 * DAY, 7 * DAY, 14 * DAY].map((span) => ({ span })),
+  ...[1, 3, 6, 12, 24, 60, 120].map((months) => ({
+    span: months * MONTH,
+    months,
+  })),
 ];
+/** Tick times of `step` from `from` to `to`. */
+function* tickTimes(step: Step, from: number, to: number) {
+  if (!step.months) {
+    for (
+      let at = Math.ceil(from / step.span) * step.span;
+      at <= to;
+      at += step.span
+    )
+      yield at;
+    return;
+  }
+  const date = new Date(from);
+  let index = date.getUTCFullYear() * 12 + date.getUTCMonth();
+  index = Math.ceil(index / step.months) * step.months;
+  for (;;) {
+    const at = Date.UTC(Math.floor(index / 12), index % 12, 1);
+    if (at > to) return;
+    if (at >= from) yield at;
+    index += step.months;
+  }
+}
 const pad = (value: number) => String(value).padStart(2, '0');
 
 export type MissionTapeFrame = {
@@ -66,30 +87,47 @@ export function drawMissionTape(
   context.globalAlpha = 1;
 
   const label =
-    STEPS.find((step) => step / msPerPx >= LABEL_GAP) ?? STEPS.at(-1)!;
+    STEPS.find((step) => step.span / msPerPx >= LABEL_GAP) ?? STEPS.at(-1)!;
+  // Minor ticks divide the labelled ones: months into months (or days),
+  // fixed spans into fixed spans.
   const minor = [...STEPS]
     .reverse()
-    .find((step) => step < label && step / msPerPx >= 7 && label % step === 0);
+    .find(
+      (step) =>
+        step.span < label.span &&
+        step.span / msPerPx >= 7 &&
+        (label.months
+          ? step.months
+            ? label.months % step.months === 0
+            : step.span === DAY
+          : !step.months && label.span % step.span === 0),
+    );
   context.font = `500 9px ${font}`;
   context.textAlign = 'center';
-  const ticks = (step: number, major: boolean) => {
-    const first = Math.ceil((time - center * msPerPx) / step) * step;
-    for (let at = first; x(at) <= width + 1; at += step) {
-      if (at < min || at > max) continue;
+  const ticks = (step: Step, major: boolean) => {
+    const from = Math.max(min, time - center * msPerPx);
+    const to = Math.min(max, time + (width - center) * msPerPx);
+    for (const at of tickTimes(step, from, to)) {
       const date = new Date(at);
-      const midnight = at % DAY === 0;
+      // Days, or years when the ticks are months apart, stand out.
+      const strong = step.months ? date.getUTCMonth() === 0 : at % DAY === 0;
       const tick = Math.round(x(at)) + 0.5;
-      context.strokeStyle = `rgba(223, 218, 245, ${major ? (midnight ? 0.62 : 0.42) : 0.16})`;
+      context.strokeStyle = `rgba(223, 218, 245, ${major ? (strong ? 0.62 : 0.42) : 0.16})`;
       context.beginPath();
       context.moveTo(tick, base);
-      context.lineTo(tick, base - (major ? (midnight ? 13 : 9) : 4));
+      context.lineTo(tick, base - (major ? (strong ? 13 : 9) : 4));
       context.stroke();
       if (!major) continue;
-      context.fillStyle = `rgba(223, 218, 245, ${midnight ? 0.8 : 0.45})`;
+      context.fillStyle = `rgba(223, 218, 245, ${strong ? 0.8 : 0.45})`;
+      const year = date.getUTCFullYear();
       context.fillText(
-        midnight
-          ? `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
-          : `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`,
+        step.months
+          ? step.months >= 12
+            ? String(year)
+            : `${year}-${pad(date.getUTCMonth() + 1)}`
+          : strong
+            ? `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
+            : `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`,
         tick,
         base - 18,
       );

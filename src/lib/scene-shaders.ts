@@ -142,7 +142,8 @@ float stars(vec3 dir, float cellPx, float density, float sizePx, float seed) {
   return exp(-dot(d, d) / (radius * radius)) * (0.25 + 0.75 * hash3(id + seed + 7.9));
 }
 
-vec3 sky(vec3 dir) {
+// The Sun is a disc 'disc' radians across with a glow scaled by 'glow'.
+vec3 skyWith(vec3 dir, vec3 sun, float disc, float glow) {
   float latitude = dot(dir, ${NGP});
   float band = exp(-latitude * latitude / 0.022);
   float bulge = exp(-(1.0 - dot(dir, ${GC})) * 3.5);
@@ -155,22 +156,29 @@ vec3 sky(vec3 dir) {
   vec3 color = vec3(0.82, 0.85, 1.0) * light * 0.5 + milky * 0.075;
   // The Sun: a wide warm glow and its disc (half a degree, drawn a little
   // larger so it reads at screen resolution).
-  float angle = acos(clamp(dot(dir, uSun), -1.0, 1.0));
-  color += vec3(1.0, 0.72, 0.42) * (0.3 * exp(-angle * 4.0) + 0.1 * exp(-angle * 1.3));
-  color += vec3(1.0, 0.95, 0.86) * (1.0 - smoothstep(0.0085, 0.011, angle)) * 2.5;
+  float angle = acos(clamp(dot(dir, sun), -1.0, 1.0));
+  color += vec3(1.0, 0.72, 0.42) * glow * (0.3 * exp(-angle * 4.0) + 0.1 * exp(-angle * 1.3));
+  // A corona that grows with the disc.
+  color += vec3(1.0, 0.8, 0.55) * 0.6 * exp(-max(angle - disc, 0.0) / (disc * 0.9)) * step(0.02, disc);
+  color += vec3(1.0, 0.95, 0.86) * (1.0 - smoothstep(disc * 0.77, disc, angle)) * 2.5;
   return 1.0 - exp(-color * 1.15);
 }
+vec3 sky(vec3 dir) {
+  return skyWith(dir, uSun, 0.011, 1.0);
+}
 
-vec4 earth(vec3 dir) {
+// Earth seen along 'dir' from 'eye' (the camera relative to Earth's
+// centre), lit from 'sun'.
+vec4 earthFrom(vec3 dir, vec3 eye, vec3 sun) {
   float R = uEarthR;
-  float b = dot(uCam, dir);
+  float b = dot(eye, dir);
   float closest = -b;
   if (closest <= 0.0) return vec4(0.0);
   // Distance of the ray from Earth's centre, and one pixel there.
-  float miss = sqrt(max(dot(uCam, uCam) - b * b, 0.0));
+  float miss = sqrt(max(dot(eye, eye) - b * b, 0.0));
   float pixel = closest / uFocal;
-  vec3 limb = normalize(uCam + dir * closest);
-  float sunSide = dot(limb, uSun);
+  vec3 limb = normalize(eye + dir * closest);
+  float sunSide = dot(limb, sun);
   float dusk = exp(-sunSide * sunSide * 10.0);
   vec3 air = mix(vec3(0.3, 0.52, 1.0), vec3(1.0, 0.56, 0.36), dusk * 0.7);
 
@@ -185,7 +193,7 @@ vec4 earth(vec3 dir) {
   if (miss > R + pixel) return glow;
 
   float t = closest - sqrt(max(R * R - miss * miss, 0.0));
-  vec3 n = normalize(uCam + dir * t);
+  vec3 n = normalize(eye + dir * t);
   float c = cos(uGmst);
   float s = sin(uGmst);
   vec3 e = vec3(c * n.x + s * n.y, -s * n.x + c * n.y, n.z);
@@ -223,10 +231,10 @@ vec4 earth(vec3 dir) {
   ocean = mix(ocean, ice * 0.85, smoothstep(76.0, 82.0, alat + n2 * 6.0));
   vec3 surface = mix(ocean, ground, land);
 
-  float mu = dot(n, uSun);
+  float mu = dot(n, sun);
   float day = smoothstep(-0.1, 0.22, mu);
   vec3 lit = surface * (0.18 + 1.05 * pow(max(mu, 0.0), 0.8));
-  vec3 halfway = normalize(uSun - dir);
+  vec3 halfway = normalize(sun - dir);
   lit += vec3(1.0, 0.9, 0.78) * pow(max(dot(n, halfway), 0.0), 70.0) * (1.0 - land) * 0.7;
   // Night: coastlines and borders glow faintly, like a chart under a lamp,
   // and the cities light up.
@@ -244,6 +252,9 @@ vec4 earth(vec3 dir) {
 
   float alpha = 1.0 - smoothstep(R - pixel, R + pixel, miss);
   return over(vec4(color * alpha, alpha), glow);
+}
+vec4 earth(vec3 dir) {
+  return earthFrom(dir, uCam, uSun);
 }
 
 // A lit Moon disc at geom = (x, y, radius px); look = (edge blur px, opacity).
@@ -462,49 +473,66 @@ void main() {
 // A replayed mission's path: a ribbon a couple of pixels wide through the
 // spacecraft's samples, stored in the reference frame's local coordinates
 // and placed with the frame's origin, axes and scale at the moment shown
-// (see lib/mission-track.ts). The flown part is bright, the rest faint;
-// whatever Earth or the Moon hides is dropped.
+// (see lib/mission-track.ts). Everything is relative to the camera, worked
+// out on the CPU in double precision, so a path tens of AU from the Sun
+// stays steady in a close-up. The flown part is bright, the rest faint;
+// whatever either occluding sphere (Earth and the Moon, or the Sun and the
+// body in focus) hides is dropped.
 export const pathVertex = /* glsl */ `#version 300 es
 in vec3 position;
 in vec3 next;
 in float side;
 in float time;
-uniform vec3 uOrigin;
+uniform vec2 uSize;
+uniform vec2 uCenter;
+uniform float uFocal;
+uniform vec3 uRight;
+uniform vec3 uUp;
+uniform vec3 uToward;
+uniform float uNear;
+uniform vec3 uOriginRel;
 uniform mat3 uAxes;
 uniform float uScale;
 uniform float uNow;
-uniform vec3 uMoonAt;
-uniform float uMoonR;
+uniform vec4 uSphereA;
+uniform vec4 uSphereB;
 out float vFlown;
 out float vHidden;
 out float vSide;
-${camera}
 vec3 place(vec3 local) {
-  return uOrigin + uAxes * (local / uScale);
+  return uOriginRel + uAxes * (local / uScale);
 }
-bool behindMoon(vec3 p) {
-  vec3 d = p - uCam;
-  float len = length(d);
-  d /= len;
-  vec3 o = uCam - uMoonAt;
-  float b = dot(o, d);
-  float disc = b * b - (dot(o, o) - uMoonR * uMoonR);
+vec3 screenOf(vec3 rel) {
+  float z = -dot(rel, uToward);
+  return vec3(uCenter + vec2(dot(rel, uRight), -dot(rel, uUp)) * uFocal / max(z, 1e-6), z);
+}
+vec4 clipFromPx(vec2 px) {
+  return vec4(px.x / uSize.x * 2.0 - 1.0, 1.0 - px.y / uSize.y * 2.0, 0.0, 1.0);
+}
+// Whether a sphere (camera-relative centre, radius) hides the point.
+bool hides(vec4 sphere, vec3 rel) {
+  if (sphere.w <= 0.0) return false;
+  vec3 c = sphere.xyz;
+  if (dot(rel - c, rel - c) < sphere.w * sphere.w) return true;
+  float len = length(rel);
+  vec3 d = rel / len;
+  float b = dot(d, c);
+  float disc = b * b - dot(c, c) + sphere.w * sphere.w;
   if (disc <= 0.0) return false;
-  float t = -b - sqrt(disc);
+  float t = b - sqrt(disc);
   return t > 0.0 && t < len;
 }
 void main() {
   vec3 p = place(position);
-  vec3 here = toScreen(p);
-  vec3 there = toScreen(place(next));
+  vec3 here = screenOf(p);
+  vec3 there = screenOf(place(next));
   vec2 along = there.xy - here.xy;
   float length2 = dot(along, along);
   along = length2 > 1e-8 ? along / sqrt(length2) : vec2(1.0, 0.0);
   vFlown = time <= uNow ? 1.0 : 0.0;
   float width = mix(1.8, 2.8, vFlown);
   gl_Position = clipFromPx(here.xy + vec2(-along.y, along.x) * side * width * 0.5);
-  float cover = earthCover(p);
-  vHidden = here.z < uNear || there.z < uNear || (cover > 0.5 && cover < 1.5) || behindMoon(p) ? 1.0 : 0.0;
+  vHidden = here.z < uNear || there.z < uNear || hides(uSphereA, p) || hides(uSphereB, p) ? 1.0 : 0.0;
   vSide = side;
 }
 `;
@@ -520,5 +548,99 @@ void main() {
   if (vHidden > 0.5) discard;
   float a = uAlpha * mix(0.28, 0.92, vFlown) * (1.0 - smoothstep(0.3, 1.0, abs(vSide)));
   fragColor = vec4(uColor * a, a);
+}
+`;
+
+export const HELIO_BODIES = 12;
+// The solar-system view in one pass: the sky with the Sun at its true size
+// and distance, and every planet ray-traced as a sphere (Earth with its own
+// shading, the rest with latitude bands and mottling, Saturn with its
+// rings). The CPU sorts the bodies far to near and inflates the small ones
+// to a couple of pixels; everything is relative to the camera.
+export const helioFragment =
+  skyFragment.slice(0, skyFragment.indexOf('void main() {')) +
+  /* glsl */ `
+#define BODIES ${HELIO_BODIES}
+uniform vec3 uSunView;
+uniform float uSunDisc;
+uniform float uSunGlow;
+uniform int uBodyCount;
+// Camera-relative centre and drawn radius; true radius.
+uniform vec4 uBody[BODIES];
+uniform float uBodyTrue[BODIES];
+uniform vec3 uBodyColor[BODIES];
+uniform vec3 uBodyBand[BODIES];
+// Band frequency, band contrast, mottling, kind (0 plain, 1 ringed, 2 Earth).
+uniform vec4 uBodyLook[BODIES];
+uniform vec3 uBodyPole[BODIES];
+// Unit vector from the body to the Sun.
+uniform vec3 uBodySun[BODIES];
+
+// Saturn's C, B and A rings and the Cassini division, in mean radii.
+float ringDensity(float r) {
+  float d = 0.16 * step(1.28, r) * step(r, 1.58)
+    + 0.85 * step(1.58, r) * step(r, 2.02)
+    + 0.08 * step(2.02, r) * step(r, 2.1)
+    + 0.55 * step(2.1, r) * step(r, 2.35);
+  return d * (0.8 + 0.2 * sin(r * 157.0));
+}
+
+vec4 planet(int i, vec3 dir) {
+  vec3 c = uBody[i].xyz;
+  float R = uBody[i].w;
+  vec4 look = uBodyLook[i];
+  vec3 pole = uBodyPole[i];
+  vec3 sun = uBodySun[i];
+  if (look.w > 1.5) return earthFrom(dir, -c, sun);
+  float b = dot(c, dir);
+  float pixel = max(b, 1e-6) / uFocal;
+  float miss = sqrt(max(dot(c, c) - b * b, 0.0));
+  // Inflated dots glow evenly rather than showing a tiny crescent.
+  float inflated = clamp(R / max(uBodyTrue[i], 1e-9) - 1.0, 0.0, 1.0);
+  vec4 sphere = vec4(0.0);
+  float tSphere = 1e30;
+  if (b > 0.0 && miss < R + pixel) {
+    tSphere = b - sqrt(max(R * R - miss * miss, 0.0));
+    vec3 n = normalize(dir * tSphere - c);
+    float lat = asin(clamp(dot(n, pole), -1.0, 1.0));
+    float seed = float(i) * 7.13;
+    float wave = 0.5 + 0.5 * sin(lat * look.x * 2.0 + (fbm(n * 2.3 + seed) - 0.5) * 2.2);
+    vec3 albedo = mix(uBodyColor[i], uBodyBand[i], wave * look.y);
+    albedo = mix(albedo, uBodyBand[i], clamp((fbm(n * 5.5 + seed) - 0.42) * look.z * 2.2, 0.0, 1.0));
+    float mu = dot(n, sun);
+    float limb = 0.72 + 0.28 * max(dot(n, -dir), 0.0);
+    vec3 lit = albedo * limb * (0.02 + 1.08 * smoothstep(-0.06, 0.12, mu) * max(mu, 0.05));
+    lit = mix(lit, albedo * 0.9, inflated * 0.6);
+    float alpha = 1.0 - smoothstep(R - pixel, R + pixel, miss);
+    sphere = vec4(lit * alpha, alpha);
+  }
+  if (look.w < 0.5) return sphere;
+  float dp = dot(dir, pole);
+  if (abs(dp) < 1e-6) return sphere;
+  float tRing = dot(c, pole) / dp;
+  if (tRing <= 0.0) return sphere;
+  vec3 q = dir * tRing - c;
+  float r = length(q) / R;
+  float density = ringDensity(r);
+  if (density <= 0.0) return sphere;
+  // In Saturn's shadow, the far side of the rings goes dark.
+  float along = dot(q, sun);
+  float shade = along < 0.0 && length(q - sun * along) < R ? 0.12 : 1.0;
+  vec3 ringColor = vec3(0.86, 0.78, 0.62) * (0.3 + 0.8 * abs(dot(pole, sun))) * shade;
+  vec4 ring = vec4(ringColor * density, density) * (1.0 - inflated * 0.5);
+  return tRing < tSphere ? over(ring, sphere) : over(sphere, ring);
+}
+
+void main() {
+  vec2 p = vec2(gl_FragCoord.x, uSize.y * uDpr - gl_FragCoord.y) / uDpr;
+  vec3 dir = viewRay(p);
+  vec3 background = skyWith(dir, uSunView, uSunDisc, uSunGlow);
+  vec4 color = vec4(background, clamp(max(background.r, max(background.g, background.b)), 0.0, 1.0));
+  for (int i = 0; i < BODIES; i++) {
+    if (i >= uBodyCount) break;
+    color = over(planet(i, dir), color);
+  }
+  color.rgb += (hash(gl_FragCoord.xy) - 0.5) / 255.0;
+  fragColor = clamp(color, 0.0, 1.0);
 }
 `;
