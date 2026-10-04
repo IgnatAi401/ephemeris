@@ -12,6 +12,7 @@ export type LayerId =
   | 'receivers'
   | 'lights'
   | 'halo'
+  | 'spill'
   | 'highlight'
   | 'bloom';
 
@@ -25,6 +26,7 @@ export const VISUAL_LAYERS = [
   { id: 'receivers', en: 'Ground links', zh: '地面站连线' },
   { id: 'lights', en: 'City lights', zh: '城市灯光' },
   { id: 'halo', en: 'Starlink glow', zh: '星链光晕' },
+  { id: 'spill', en: 'GNSS signal cones', zh: 'GNSS 信号锥' },
   { id: 'highlight', en: 'Highlight new launches', zh: '新发射高亮' },
   { id: 'bloom', en: 'Bloom', zh: '辉光' },
 ] as const satisfies readonly { id: LayerId; en: string; zh: string }[];
@@ -36,5 +38,7 @@ export function defaultLayers(bloom: boolean): Layers {
   for (const id of GROUP_LAYER) layers[id] = true;
   for (const { id } of VISUAL_LAYERS) layers[id] = true;
   layers.bloom = bloom;
+  // Off unless asked for: the cones fill the frame at any scale.
+  layers.spill = false;
   return layers;
 }

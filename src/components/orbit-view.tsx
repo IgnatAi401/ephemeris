@@ -77,6 +77,7 @@ type Pose = Omit<
   | 'lights'
   | 'recent'
   | 'halo'
+  | 'spill'
   | 'bloom'
   | 'selected'
   | 'hovered'
@@ -99,7 +100,6 @@ const POSES: Record<Focus, Pose> = {
     receiver: 1,
     moonPath: 0,
     deep: 0,
-    spill: 0,
     lunar: 0,
     fitMoon: 0,
   },
@@ -113,7 +113,6 @@ const POSES: Record<Focus, Pose> = {
     receiver: 0.35,
     moonPath: 0,
     deep: 0,
-    spill: 0,
     lunar: 0,
     fitMoon: 0,
   },
@@ -127,7 +126,6 @@ const POSES: Record<Focus, Pose> = {
     receiver: 0.6,
     moonPath: 0,
     deep: 0,
-    spill: 0,
     lunar: 0,
     fitMoon: 0,
   },
@@ -141,7 +139,6 @@ const POSES: Record<Focus, Pose> = {
     receiver: 0,
     moonPath: 1,
     deep: 0,
-    spill: 1,
     lunar: 1,
     fitMoon: 1,
   },
@@ -155,7 +152,6 @@ const POSES: Record<Focus, Pose> = {
     receiver: 0,
     moonPath: 0.5,
     deep: 1,
-    spill: 0,
     lunar: 0,
     fitMoon: 0,
   },
@@ -177,7 +173,7 @@ const TYPE_POSES: Record<OrbitTypeId, Pose> = {
   molniya: { ...POSES.gnss, zoom: 10, elevation: 18 * DEG },
   sso: { ...POSES.leo, zoom: 2.3, elevation: 62 * DEG },
   // Turned to the trip itself when chosen (see transferPose).
-  tli: { ...POSES.moon, zoom: 60, spill: 0, lunar: 0, fitMoon: 0 },
+  tli: { ...POSES.moon, zoom: 60, lunar: 0, fitMoon: 0 },
 };
 const DEMO_START: Elements = {
   a: 3.4,
@@ -1163,6 +1159,7 @@ export function OrbitView({
         lights: weights.lights * ramp(introAt, 0.15, 0.45),
         recent: weights.highlight * ramp(introAt, 0.85, 1),
         halo: weights.halo * ramp(introAt, 0.5, 0.75),
+        spill: weights.spill * ramp(introAt, 0.85, 1),
         bloom: weights.bloom * 0.9,
         selected: selection.current,
         hovered: hovered.current,
@@ -1392,7 +1389,7 @@ export function OrbitView({
       en: 'Earth–Moon',
       zh: '地月空间',
       short: ['Moon', '地月'],
-      meta: 'CISLUNAR · GNSS SPILLOVER',
+      meta: 'CISLUNAR · MOON',
     },
     {
       id: 'deep' as const,

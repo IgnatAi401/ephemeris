@@ -75,7 +75,7 @@ export type SceneView = {
   moonPath: number;
   /** Sun–Earth line, L1/L2 and the spacecraft there. */
   deep: number;
-  /** GNSS main-lobe signal spilling past Earth's limb. */
+  /** GNSS main-lobe signal spilling past Earth's limb (a layer switch). */
   spill: number;
   /** The lunar close-up with LRO and Danuri. */
   lunar: number;
@@ -380,13 +380,13 @@ export function createOrbitScene(
   let pickAlpha: number[] = Array.from({ length: GROUPS }, () => 0);
   const context = overlay.getContext('2d');
   // The spillover glow is painted here first, then revealed through a disc
-  // that grows out of Earth as the Earth–Moon view opens. It is soft enough
+  // that grows out of Earth as its layer switch fades in. It is soft enough
   // to paint at half a CSS pixel per pixel: a sixteenth of the work at 2×.
   const HAZE_SCALE = 0.5;
   const hazeCanvas = document.createElement('canvas');
   const haze = hazeCanvas.getContext('2d');
-  // The cones are the costliest thing on screen and barely move at Earth–Moon
-  // scale, so they are repainted when the camera or layers change and
+  // The cones are the costliest thing on screen and barely move between
+  // frames, so they are repainted when the camera or layers change and
   // otherwise at most ten times a second.
   let hazeKey = '';
   let hazeAt = Number.NEGATIVE_INFINITY;
