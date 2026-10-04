@@ -20,6 +20,7 @@ import {
 import type { Language } from '@/lib/i18n';
 import {
   CONSTELLATIONS,
+  EARTH_RADIUS_KM,
   groundPoint,
   positionAt,
   sunDirection,
@@ -57,8 +58,14 @@ import { precise, type Precise } from '@/lib/precise';
 import type { Observer, Pass } from '@/lib/passes';
 import { readHash, writeHash } from '@/lib/share';
 import { LearnPanel } from '@/components/learn-panel';
-import type { Elements } from '@/lib/kepler';
-import { classify, ORBIT_TYPES, type OrbitTypeId } from '@/lib/orbit-types';
+import { apsides, orbitPoint, type Elements } from '@/lib/kepler';
+import {
+  classify,
+  lunarTransfer,
+  ORBIT_TYPES,
+  type OrbitTypeId,
+} from '@/lib/orbit-types';
+import { frameHalf } from '@/lib/scene-camera';
 
 type Preset = 'leo' | 'gnss' | 'moon' | 'deep';
 type Focus = Preset | 'overview';
@@ -169,6 +176,8 @@ const TYPE_POSES: Record<OrbitTypeId, Pose> = {
   heo: { ...POSES.gnss, zoom: 11, elevation: 22 * DEG },
   molniya: { ...POSES.gnss, zoom: 10, elevation: 18 * DEG },
   sso: { ...POSES.leo, zoom: 2.3, elevation: 62 * DEG },
+  // Turned to the trip itself when chosen (see transferPose).
+  tli: { ...POSES.moon, zoom: 60, spill: 0, lunar: 0, fitMoon: 0 },
 };
 const DEMO_START: Elements = {
   a: 3.4,
@@ -179,6 +188,8 @@ const DEMO_START: Elements = {
   M: 30 * DEG,
 };
 const EXAMPLE_COLOR = '#ffd28a';
+// Room the side panels leave either side of Earth on a wide screen, px.
+const PANEL_ROOM = 240;
 const PRESETS: Preset[] = ['leo', 'gnss', 'moon', 'deep'];
 const KEYS = Object.keys(POSES.overview) as (keyof Pose)[];
 const ZOOM_RANGE = [0.75, 600];
@@ -266,6 +277,39 @@ const introGroup = CONSTELLATIONS.map(({ key, kind }) =>
       ? (t: number) => ramp(t, 0.45, 0.68)
       : (t: number) => ramp(t, 0.6, 0.85),
 );
+
+/** A view down onto a trip to the Moon, the meeting point on the left (the
+ * side panel covers the right) and the whole path in the frame. */
+function transferPose(trip: ReturnType<typeof lunarTransfer>, time: number) {
+  const { elements } = trip;
+  const meet = orbitPoint(elements, Math.PI);
+  // Looking along this longitude, the apse line runs across the screen
+  // with the Moon end to the left.
+  const phi = Math.atan2(meet[1], meet[0]) + Math.PI / 2;
+  const normal = [
+    Math.sin(elements.raan) * Math.sin(elements.i),
+    -Math.cos(elements.raan) * Math.sin(elements.i),
+    Math.cos(elements.i),
+  ];
+  // Tip down toward the plane's normal, a little short of face-on for depth.
+  const faceOn = Math.atan2(
+    normal[2],
+    normal[0] * Math.cos(phi) + normal[1] * Math.sin(phi),
+  );
+  const sun = sunDirection(time);
+  const { innerWidth: width, innerHeight: height } = window;
+  const room = width / 2 - (width >= 720 ? PANEL_ROOM : 16);
+  return {
+    ...TYPE_POSES.tli,
+    zoom: Math.max(
+      40,
+      ((Math.hypot(...meet) + 4) * frameHalf(width, height)) /
+        Math.max(room, 120),
+    ),
+    elevation: Math.min(65 * DEG, Math.max(20 * DEG, faceOn - 20 * DEG)),
+    azimuth: phi - Math.atan2(sun[1], sun[0]),
+  };
+}
 
 /** The live sky, full screen: every group propagated from a CelesTrak
  * snapshot under the real Sun and Moon, with presets that roam from low
@@ -398,6 +442,8 @@ export function OrbitView({
   const focusMask = useRef<Uint8Array | null>(null);
   const focusTarget = useRef(0);
   const example = useRef<SceneView['example']>(null);
+  // The trip to the Moon shown for the transfer family, from when it was picked.
+  const transfer = useRef<ReturnType<typeof lunarTransfer> | null>(null);
 
   useEffect(() => {
     text.current = sceneText(lang);
@@ -494,8 +540,16 @@ export function OrbitView({
     setOrbitType(id);
     if (!id) return;
     setDemoShown(false);
-    const pose = TYPE_POSES[id];
-    tweenTo(pose, 1800);
+    if (id === 'tli') {
+      // Five days of flight: run the clock fast enough to watch it.
+      if (!reducedMotion())
+        setClock({ speed: 3600, playing: true, live: false });
+      const now = simTime();
+      transfer.current = lunarTransfer(now);
+      tweenTo(transferPose(transfer.current, now), 2200);
+      return;
+    }
+    tweenTo(TYPE_POSES[id], 1800);
   };
   // The family's members stand out in the scene, with its example orbit.
   useEffect(() => {
@@ -509,6 +563,22 @@ export function OrbitView({
         elements: demo,
         label: lang === 'en' ? 'Demo orbit' : '演示轨道',
         color: EXAMPLE_COLOR,
+      };
+    } else if (type?.id === 'tli' && transfer.current) {
+      const { elements, arrive, depart } = transfer.current;
+      const date = utc(arrive).slice(5, 16);
+      example.current = {
+        elements,
+        label: lang === 'en' ? type.en : type.zh,
+        color: EXAMPLE_COLOR,
+        transfer: {
+          depart,
+          arrive,
+          arrival:
+            lang === 'en'
+              ? `Moon arrives ${date} UTC`
+              : `月球 ${date} UTC 到达此处`,
+        },
       };
     } else if (type) {
       // Turn the example's plane square to the camera: its node line runs
@@ -862,6 +932,12 @@ export function OrbitView({
 
   const toggleLayer = (id: LayerId) =>
     setLayers((current) => ({ ...current, [id]: !current[id] }));
+  const setAllLayers = (on: boolean) =>
+    setLayers((current) => {
+      const next = { ...current };
+      for (const id of Object.keys(next) as LayerId[]) next[id] = on;
+      return next;
+    });
 
   // --- Keyboard ---------------------------------------------------------------
   useEffect(() => {
@@ -1293,6 +1369,7 @@ export function OrbitView({
           open={panelOpen}
           onOpenChange={setPanelOpen}
           onToggle={toggleLayer}
+          onSetAll={setAllLayers}
         />
         <Freshness lang={lang} />
         <div className="orbit-side" ref={side}>
@@ -1336,6 +1413,13 @@ export function OrbitView({
               onShow={(show) => {
                 setDemoShown(show);
                 if (show) setOrbitType(null);
+                // Step back far enough to see the whole orbit.
+                const reach = apsides(demo)[1] / EARTH_RADIUS_KM + 1;
+                if (
+                  show &&
+                  reach > (sceneRef.current?.camera()?.zoom ?? 0) * 0.8
+                )
+                  tweenTo({ ...holdPose(), zoom: reach * 1.25 }, 1400);
               }}
               onClose={closeLearn}
             />
@@ -1421,7 +1505,7 @@ export function OrbitView({
             aria-label={t('Learn about orbits', '轨道科普')}
             title={t(
               'Orbit types and the six elements',
-              '轨道类型与六个轨道根数',
+              '轨道类型与轨道六根数',
             )}
             aria-pressed={learnOpen}
             onClick={() => (learnOpen ? closeLearn() : setLearnOpen(true))}

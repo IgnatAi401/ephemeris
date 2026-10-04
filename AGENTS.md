@@ -28,9 +28,10 @@
   - `src/lib/share.ts`：分享链接的 hash 格式（`t`、`cam`、`f`、`sel`、`layers`）。只有点“分享”时才写入地址栏；打开带 hash 的链接会跳过开场、暂停在该时刻；之后第一次点击或滚轮就清掉 hash，避免刷新时一直停在旧时刻。
   - 组件：`search-box.tsx`、`info-card.tsx`、`pass-panel.tsx`、`sky-chart.tsx`，都放在场景右侧的 `.orbit-side` 栏（窄屏时变为底部浮层）。
 - 科普（阶段 5）：
-  - `src/lib/orbit-types.ts`：六类轨道（LEO、MEO、GEO、HEO、闪电、太阳同步）的判定规则、中英文讲解和示例根数；`classify(fleet)` 生成每类的卫星掩码和数量。太阳同步按 J2 升交点进动速率与太阳平运动（每天约 0.9856°）相差 10% 以内判定。
+  - `src/lib/orbit-types.ts`：七类轨道（LEO、MEO、GEO、HEO、闪电、太阳同步、地月转移）的判定规则、中英文讲解和示例根数；`classify(fleet)` 生成每类的卫星掩码和数量。太阳同步按 J2 升交点进动速率与太阳平运动（每天约 0.9856°）相差 10% 以内判定。
+  - 地月转移（`tli`）：CelesTrak 数据里通常没有这类目标（远地点 > 15 万 km），按示意轨道处理。`lunarTransfer(depart)` 从 200 km 停泊轨道出发，远地点放在月球到达时刻的真实位置、轨道面取月球轨道面，飞行时间为半个周期（约 5 天）。选中时镜头转到俯视这段路程（`transferPose`，远地点在左，避开右侧面板），时钟调到 3600×；场景只画去程半个椭圆、到达点标记，到达后探测器绕月飞行（`SceneView.example.transfer`）。
   - 场景的教学模式：`OrbitScene.setFocus(mask)` 加 `SceneView.focus`（0–1）让该类卫星突出、其余变暗；`SceneView.example` 用经典根数画一条虚线示例轨道（`src/lib/kepler.ts`）。
-  - `src/components/learn-panel.tsx`：“轨道类型”和“六个轨道根数”两个标签页；`elements-demo.tsx` 是可拖动旋转的二维小图，六个滑块分别标出 a、e、i、Ω、ω、M（以真近点角 ν 表示）并给出说明，可把演示轨道画进主视图（Ω 从真实春分点方向量起）。
+  - `src/components/learn-panel.tsx`：“轨道类型”和“轨道六根数”两个标签页；`elements-demo.tsx` 是可拖动旋转的二维小图，六个滑块分别标出 a、e、i、Ω、ω、M（以真近点角 ν 表示）并给出说明，可把演示轨道画进主视图（Ω 从真实春分点方向量起，轨道超出当前画面时镜头自动拉远）。a 的滑块按对数刻度，范围 1.1–64 地球半径（到月球距离），e 最大 0.98；远地点超过约 6 个地球半径后画面比例随之缩小，并显示月球距离圈。
   - 文案全部中英双语，默认中文。
 - `scripts/fetch-orbits.mjs`、`scripts/check-orbits.mjs`：抓取与离线校验。
 - `public/data/`：抓取产物，**不进 Git**，只随构建部署。

@@ -301,6 +301,22 @@ body {
   outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
   outline-offset: 1px;
 }
+.orbit-key-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.orbit-key-all {
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: rgba(170, 166, 196, 0.8) !important;
+  font-size: 9px !important;
+}
+.orbit-key-all:hover {
+  background: rgba(var(--glow-rgb), 0.12) !important;
+  color: var(--text-1) !important;
+}
 .orbit-key-toggle {
   display: flex;
   align-items: center;
@@ -1031,6 +1047,12 @@ body {
   margin: 6px 0 0;
   color: #ffb38a;
   font-size: 11px;
+}
+.orbit-demo-note {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
 }
 .orbit-demo-presets {
   display: flex;

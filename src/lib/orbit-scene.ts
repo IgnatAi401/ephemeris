@@ -102,7 +102,15 @@ export type SceneView = {
    * `setFocus`) stand out from the rest, 0–1. */
   focus?: number;
   /** An orbit drawn from classical elements (the learn panel). */
-  example?: { elements: Elements; label: string; color: string } | null;
+  example?: {
+    elements: Elements;
+    label: string;
+    color: string;
+    /** A trip to the Moon: only the outbound half is drawn, the spacecraft
+     * leaves perigee at `depart` and meets the Moon at apogee at `arrive`,
+     * then circles it. `arrival` labels the meeting point until then. */
+    transfer?: { depart: number; arrive: number; arrival: string };
+  } | null;
 };
 export type Selection = {
   index: number;
@@ -826,17 +834,19 @@ export function createOrbitScene(
       }
     }
     // An example orbit from the learn panel: the ellipse (broken where Earth
-    // hides it), its perigee, and the satellite at its mean anomaly.
+    // hides it), its perigee, and the satellite at its mean anomaly. A
+    // transfer stops at the Moon and shows where it meets it.
     const example = view.example;
     if (example) {
-      const { elements, color } = example;
+      const { elements, color, transfer } = example;
+      const sweep = transfer ? Math.PI : Math.PI * 2;
       context.strokeStyle = rgba(color, 0.9);
       context.lineWidth = 1.6;
       context.setLineDash([6, 4]);
       context.beginPath();
       let drawing = false;
       for (let step = 0; step <= 240; step++) {
-        const p = orbitPoint(elements, (step / 240) * Math.PI * 2);
+        const p = orbitPoint(elements, (step / 240) * sweep);
         const point = hidden(p) ? null : screen(p);
         if (!point || !Number.isFinite(point[0] + point[1])) {
           drawing = false;
@@ -856,15 +866,59 @@ export function createOrbitScene(
         context.arc(px, py, 2.5, 0, Math.PI * 2);
         context.fill();
       }
-      const body = orbitPoint(elements, trueAnomaly(elements.M, elements.e));
-      const [bx, by] = screen(body);
+      const progress = transfer
+        ? (time - transfer.depart) / (transfer.arrive - transfer.depart)
+        : 0;
+      let body: [number, number];
+      let behind = false;
+      // The Moon's own label sits beside it, so a captured spacecraft is
+      // labelled below its ring.
+      let tag: [number, number, CanvasTextAlign] | null = null;
+      if (transfer && progress >= 1) {
+        // Captured: a small lunar orbit, about two hours a lap.
+        const ring = moonRadius + 7;
+        const angle = ((time - transfer.arrive) / 7200000) * Math.PI * 2;
+        context.strokeStyle = rgba(color, 0.55);
+        context.lineWidth = 1;
+        context.setLineDash([3, 3]);
+        context.beginPath();
+        context.arc(moonAt[0], moonAt[1], ring, 0, Math.PI * 2);
+        context.stroke();
+        context.setLineDash([]);
+        body = [
+          moonAt[0] + Math.cos(angle) * ring,
+          moonAt[1] - Math.sin(angle) * ring,
+        ];
+        tag = [moonAt[0], moonAt[1] + ring + 16, 'center'];
+      } else {
+        if (transfer) {
+          // Where the Moon will be on arrival.
+          const meet = orbitPoint(elements, Math.PI);
+          const [qx, qy] = screen(meet);
+          if (Number.isFinite(qx + qy)) {
+            context.strokeStyle = rgba(color, 0.75);
+            context.lineWidth = 1.2;
+            context.beginPath();
+            context.arc(qx, qy, 9, 0, Math.PI * 2);
+            context.stroke();
+            label(transfer.arrival, qx, qy + 24, 0.9, 'center');
+          }
+        }
+        const M = transfer
+          ? Math.PI * Math.min(1, Math.max(0, progress))
+          : elements.M;
+        const p = orbitPoint(elements, trueAnomaly(M, elements.e));
+        body = screen(p);
+        behind = hidden(p);
+      }
+      const [bx, by] = body;
       if (Number.isFinite(bx + by)) {
-        const behind = hidden(body);
         context.fillStyle = rgba(color, behind ? 0.35 : 1);
         context.beginPath();
         context.arc(bx, by, 4, 0, Math.PI * 2);
         context.fill();
-        label(example.label, bx + 9, by - 8, behind ? 0.5 : 1);
+        const [lx, ly, align] = tag ?? [bx + 9, by - 8, 'left'];
+        label(example.label, lx, ly, behind ? 0.5 : 1, align);
       }
     }
     const hovered = view.hovered;
