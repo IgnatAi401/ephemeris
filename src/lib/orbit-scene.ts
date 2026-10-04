@@ -91,6 +91,21 @@ export type SceneView = {
   halo: number;
   /** Bloom strength; 0 skips the post-processing passes entirely. */
   bloom: number;
+  /** The satellite picked in the info card, drawn from SGP4. */
+  selected?: Selection | null;
+  /** The satellite under the pointer. */
+  hovered?: { index: number; label: string } | null;
+  /** CSS px on the right covered by panels; the lunar close-up moves left. */
+  insetRight?: number;
+};
+export type Selection = {
+  index: number;
+  color: string;
+  label: string;
+  /** Earth radii, scene frame; null where SGP4 fails. */
+  position: (time: number) => readonly number[] | null;
+  /** Orbital period, ms. */
+  period: number;
 };
 export type SceneText = {
   sun: string;
@@ -346,6 +361,9 @@ export function createOrbitScene(
   let nexts = new Float32Array(0);
   const trailSatellites: number[] = [];
   let camera: Camera | null = null;
+  // Each group's point opacity in the last frame: hidden groups cannot be
+  // picked.
+  let pickAlpha: number[] = Array.from({ length: GROUPS }, () => 0);
   const context = overlay.getContext('2d');
   // The spillover glow is painted here first, then revealed through a disc
   // that grows out of Earth as the Earth–Moon view opens. It is soft enough
@@ -554,19 +572,23 @@ export function createOrbitScene(
     inset.uniforms.uMoonFrame.value = u.uMoonFrame.value;
     // The lunar close-up sits in the top-right corner of the Earth–Moon view.
     const lens = Math.min(68, height * 0.17, width * 0.15);
-    const lensAt: [number, number] = [width - lens - 20, lens + 20];
+    const lensAt: [number, number] = [
+      width - (view.insetRight ?? 0) - lens - 20,
+      lens + 20,
+    ];
     const lensWeight = view.lunar * (1 - ease) * (craft ? 1 : 0);
     inset.uniforms.uInset.value = [lensAt[0], lensAt[1], lens];
     inset.uniforms.uInsetAlpha.value = lensWeight;
 
     // Far out, the LEO shells collapse into the planet and would only smear it.
     const far = Math.min(1, Math.max(0, (zoom - 12) / 18));
-    points.uniforms.uAlpha.value = CONSTELLATIONS.map(
+    pickAlpha = CONSTELLATIONS.map(
       (_, index) =>
         (IS_LOW[index] ? view.leo * (1 - far) : view.gnss) *
         view.groups[index] *
         (index === STARLINK ? 0.82 : 1),
     );
+    points.uniforms.uAlpha.value = pickAlpha;
     points.uniforms.uSizeScale.value =
       1 + 0.25 * Math.min(1, Math.max(0, (3.7 - zoom) / 2.2)) - 0.2 * far;
     points.uniforms.uDistance.value = cam.distance;
@@ -690,6 +712,128 @@ export function createOrbitScene(
       );
     };
     const earthPx = earthR * scale;
+    const rgba = (color: string, alpha: number) => {
+      const [r, g, b] = hex(color);
+      return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
+    };
+
+    // The selected satellite: its orbit over one period around now, its
+    // ground track from half an orbit back to one and a half ahead (on the
+    // turning Earth, so the track lies under the right ground), and a marker
+    // at its SGP4 position.
+    const selected = view.selected;
+    if (selected) {
+      const color = selected.color;
+      const span = Math.min(selected.period, DAY_MS);
+      const gmstNow = siderealAngle(time);
+      const strokeTrack = (
+        from: number,
+        to: number,
+        alpha: number,
+        dash: number[],
+      ) => {
+        context.setLineDash(dash);
+        context.strokeStyle = rgba(color, alpha);
+        context.lineWidth = 1.1;
+        context.beginPath();
+        let drawing = false;
+        const steps = 120;
+        for (let step = 0; step <= steps; step++) {
+          const t = from + ((to - from) * step) / steps;
+          const p = selected.position(t);
+          if (!p) {
+            drawing = false;
+            continue;
+          }
+          // Where the ground under the satellite at t is now.
+          const turn = gmstNow - siderealAngle(t);
+          const [c, s] = [Math.cos(turn), Math.sin(turn)];
+          const length = Math.hypot(p[0], p[1], p[2]) || 1;
+          const ground = [
+            ((c * p[0] - s * p[1]) / length) * earthR * 1.004,
+            ((s * p[0] + c * p[1]) / length) * earthR * 1.004,
+            (p[2] / length) * earthR * 1.004,
+          ];
+          const facing =
+            dot(ground, [
+              cam.position[0] - ground[0],
+              cam.position[1] - ground[1],
+              cam.position[2] - ground[2],
+            ]) > 0;
+          const [x, y] = screen(ground);
+          if (!facing || !Number.isFinite(x + y)) {
+            drawing = false;
+            continue;
+          }
+          if (drawing) context.lineTo(x, y);
+          else context.moveTo(x, y);
+          drawing = true;
+        }
+        context.stroke();
+        context.setLineDash([]);
+      };
+      strokeTrack(time - span / 2, time, 0.28, [2, 3]);
+      strokeTrack(time, time + span * 1.5, 0.6, []);
+      // The orbit itself, broken where Earth hides it.
+      context.strokeStyle = rgba(color, 0.75);
+      context.lineWidth = 1.3;
+      context.beginPath();
+      let drawing = false;
+      for (let step = 0; step <= 180; step++) {
+        const p = selected.position(time + (step / 180 - 0.5) * span);
+        const point = p && !hidden(p) ? screen(p) : null;
+        if (!point || !Number.isFinite(point[0] + point[1])) {
+          drawing = false;
+          continue;
+        }
+        if (drawing) context.lineTo(point[0], point[1]);
+        else context.moveTo(point[0], point[1]);
+        drawing = true;
+      }
+      context.stroke();
+      const now = selected.position(time);
+      if (now) {
+        const [x, y] = screen(now);
+        const behind = hidden(now);
+        if (Number.isFinite(x + y)) {
+          context.strokeStyle = rgba(color, behind ? 0.35 : 0.95);
+          context.lineWidth = 1.5;
+          context.beginPath();
+          context.arc(x, y, 8, 0, Math.PI * 2);
+          for (const [dx, dy] of [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ]) {
+            context.moveTo(x + dx * 11, y + dy * 11);
+            context.lineTo(x + dx * 16, y + dy * 16);
+          }
+          context.stroke();
+          label(selected.label, x + 14, y - 12, behind ? 0.5 : 1);
+        }
+      }
+    }
+    const hovered = view.hovered;
+    if (
+      hovered &&
+      hovered.index !== selected?.index &&
+      hovered.index < positions.length / 3
+    ) {
+      const at = hovered.index * 3;
+      const p = [positions[at], positions[at + 1], positions[at + 2]];
+      const [x, y] = screen(p);
+      if (Number.isFinite(x + y)) {
+        context.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        context.lineWidth = 1.2;
+        context.setLineDash([2, 2]);
+        context.beginPath();
+        context.arc(x, y, 7, 0, Math.PI * 2);
+        context.stroke();
+        context.setLineDash([]);
+        if (hovered.label) label(hovered.label, x + 11, y - 9, 0.95);
+      }
+    }
 
     // Ground receivers: each counts the GNSS satellites above a 10° mask.
     // Only the one facing the camera most squarely draws its links; the
@@ -862,10 +1006,6 @@ export function createOrbitScene(
       sunDir[0] < 0 ? 'left' : 'right',
     );
 
-    const rgba = (color: string, alpha: number) => {
-      const [r, g, b] = hex(color);
-      return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${alpha})`;
-    };
     const dotAt = (
       x: number,
       y: number,
@@ -1278,6 +1418,41 @@ export function createOrbitScene(
     render,
     /** The camera of the last frame, for picking. */
     camera: () => camera,
+    /** The visible satellite nearest to (x, y) CSS px within `radius`, or
+     * -1. Screen-space search over the last frame's positions: about a
+     * millisecond for fifteen thousand satellites, with no GPU read-back. */
+    pick(x: number, y: number, radius = 14) {
+      const cam = camera;
+      if (!cam || !fleet) return -1;
+      const earthR = Math.max(1, 5 / cam.scale);
+      const [ox, oy, oz] = cam.position;
+      const { right, up, toward, focal, center, near } = cam;
+      let best = -1;
+      let bestDistance = radius * radius;
+      for (let index = 0; index < fleet.count; index++) {
+        if (pickAlpha[fleet.group[index]] < 0.05) continue;
+        const px = positions[index * 3] - ox;
+        const py = positions[index * 3 + 1] - oy;
+        const pz = positions[index * 3 + 2] - oz;
+        const z = -(px * toward[0] + py * toward[1] + pz * toward[2]);
+        if (z < near) continue;
+        const k = focal / z;
+        const dx =
+          center[0] + (px * right[0] + py * right[1] + pz * right[2]) * k - x;
+        const dy = center[1] - (px * up[0] + py * up[1] + pz * up[2]) * k - y;
+        const distance = dx * dx + dy * dy;
+        if (distance >= bestDistance) continue;
+        const p = [
+          positions[index * 3],
+          positions[index * 3 + 1],
+          positions[index * 3 + 2],
+        ];
+        if (earthCover(cam, p, earthR) === 1) continue;
+        best = index;
+        bestDistance = distance;
+      }
+      return best;
+    },
     /** Positions (Earth radii) of every satellite at the last frame. */
     positions: () => positions,
     dispose() {

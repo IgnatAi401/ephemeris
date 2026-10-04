@@ -168,6 +168,11 @@ export function createFleet(snapshot: OrbitSnapshot) {
     group: new Uint8Array(count),
     /** 1 for satellites launched in the last 30 days. */
     recent: new Uint8Array(count),
+    /** The element sets as fetched, seven per satellite (orbits.json
+     * `fields`, epoch as Unix ms), for SGP4 on a selected satellite. */
+    elements: new Float64Array(count * STRIDE),
+    /** Index of each group's first satellite. */
+    starts: [] as number[],
     epoch: make(),
     a: make(),
     e: make(),
@@ -184,12 +189,25 @@ export function createFleet(snapshot: OrbitSnapshot) {
   let index = 0;
   rows.forEach((row, group) => {
     const first = index;
+    fleet.starts.push(first);
     for (const at of snapshot.recent?.[CONSTELLATIONS[group].key] ?? [])
       fleet.recent[first + at] = 1;
     for (let offset = 0; offset < row.length; offset += STRIDE, index++) {
       const [days, motion, e, inclination, raan, argp, anomaly] = row.slice(
         offset,
         offset + STRIDE,
+      );
+      fleet.elements.set(
+        [
+          snapshot.reference + days * DAY,
+          motion,
+          e,
+          inclination,
+          raan,
+          argp,
+          anomaly,
+        ],
+        index * STRIDE,
       );
       const i = inclination * DEG;
       const cos = Math.cos(i);

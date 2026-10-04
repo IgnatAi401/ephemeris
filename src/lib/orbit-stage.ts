@@ -3,7 +3,7 @@
 // only detaches them on unmount, so a remount never rebuilds.
 import type { OrbitScene } from '@/lib/orbit-scene';
 // Static: the legend needs the group table on first paint anyway.
-import { createFleet, type OrbitSnapshot } from '@/lib/orbits';
+import { createFleet, type Fleet, type OrbitSnapshot } from '@/lib/orbits';
 import type { SpacecraftSnapshot } from '@/lib/ephemeris';
 import { paintLand, type LandTopology } from '@/lib/orbit-land';
 
@@ -22,6 +22,8 @@ export type OrbitStage = {
   /** Labels drawn over the scene. */
   overlay: HTMLCanvasElement;
   scene: OrbitScene;
+  /** Every satellite's elements, as propagated by the scene. */
+  fleet: Fleet;
   counts: number[];
   fetched: string;
   /** Notified after a restored GPU context has been given a new scene. */
@@ -165,6 +167,7 @@ async function build(): Promise<OrbitStage> {
     canvas,
     overlay,
     scene,
+    fleet,
     counts: fleet.counts,
     fetched: snapshot.fetched.slice(0, 10),
     rebuilt: new Set(),
