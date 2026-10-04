@@ -6,8 +6,8 @@ export function App() {
   const [lang, setLang] = useLanguage();
   return (
     <main className="app">
-      {/* The title and controls live in the dock, not over the scene: the
-          scene's own labels and the lunar close-up use every edge. */}
+      {/* The title and controls live in the dock, which floats over the
+          bottom of the full-screen scene. */}
       <OrbitView lang={lang}>
         <div className="app-bar">
           <h1>
