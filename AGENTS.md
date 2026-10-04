@@ -27,6 +27,11 @@
   - `src/lib/passes.ts`：过境预报，条件为仰角 > 10°、卫星受光（satellite.js `shadowFraction`）、观测地太阳低于 −6°；30 秒步长扫描、二分细化起止。`src/lib/cities.ts` 为手选城市。位置**只在浏览器内计算，不上传**；只有勾选“记住”才写入 localStorage（`orbit.observer`）。
   - `src/lib/share.ts`：分享链接的 hash 格式（`t`、`cam`、`f`、`sel`、`layers`）。只有点“分享”时才写入地址栏；打开带 hash 的链接会跳过开场、暂停在该时刻；之后第一次点击或滚轮就清掉 hash，避免刷新时一直停在旧时刻。
   - 组件：`search-box.tsx`、`info-card.tsx`、`pass-panel.tsx`、`sky-chart.tsx`，都放在场景右侧的 `.orbit-side` 栏（窄屏时变为底部浮层）。
+- 科普（阶段 5）：
+  - `src/lib/orbit-types.ts`：六类轨道（LEO、MEO、GEO、HEO、闪电、太阳同步）的判定规则、中英文讲解和示例根数；`classify(fleet)` 生成每类的卫星掩码和数量。太阳同步按 J2 升交点进动速率与太阳平运动（每天约 0.9856°）相差 10% 以内判定。
+  - 场景的教学模式：`OrbitScene.setFocus(mask)` 加 `SceneView.focus`（0–1）让该类卫星突出、其余变暗；`SceneView.example` 用经典根数画一条虚线示例轨道（`src/lib/kepler.ts`）。
+  - `src/components/learn-panel.tsx`：“轨道类型”和“六个轨道根数”两个标签页；`elements-demo.tsx` 是可拖动旋转的二维小图，六个滑块分别标出 a、e、i、Ω、ω、M（以真近点角 ν 表示）并给出说明，可把演示轨道画进主视图（Ω 从真实春分点方向量起）。
+  - 文案全部中英双语，默认中文。
 - `scripts/fetch-orbits.mjs`、`scripts/check-orbits.mjs`：抓取与离线校验。
 - `public/data/`：抓取产物，**不进 Git**，只随构建部署。
 - `public/textures/night-lights.webp`：NASA Black Marble 2016 夜光（来源与处理见同目录 `README.md`）。

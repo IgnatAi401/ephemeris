@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  GraduationCap,
   Keyboard,
   Link2,
   Moon,
@@ -55,6 +56,9 @@ import { loadCatalog, type Catalog, type CatalogEntry } from '@/lib/catalog';
 import { precise, type Precise } from '@/lib/precise';
 import type { Observer, Pass } from '@/lib/passes';
 import { readHash, writeHash } from '@/lib/share';
+import { LearnPanel } from '@/components/learn-panel';
+import type { Elements } from '@/lib/kepler';
+import { classify, ORBIT_TYPES, type OrbitTypeId } from '@/lib/orbit-types';
 
 type Preset = 'leo' | 'gnss' | 'moon' | 'deep';
 type Focus = Preset | 'overview';
@@ -70,6 +74,8 @@ type Pose = Omit<
   | 'selected'
   | 'hovered'
   | 'insetRight'
+  | 'focus'
+  | 'example'
 >;
 
 const DEG = Math.PI / 180;
@@ -155,6 +161,24 @@ const INTRO_POSE: Pose = {
   azimuth: 150 * DEG,
 };
 const INTRO_MS = 5200;
+// Where the camera goes for each orbit family in the learn panel.
+const TYPE_POSES: Record<OrbitTypeId, Pose> = {
+  leo: { ...POSES.leo, zoom: 1.6 },
+  meo: { ...POSES.gnss, zoom: 7 },
+  geo: { ...POSES.gnss, zoom: 9.5, elevation: 10 * DEG },
+  heo: { ...POSES.gnss, zoom: 11, elevation: 22 * DEG },
+  molniya: { ...POSES.gnss, zoom: 10, elevation: 18 * DEG },
+  sso: { ...POSES.leo, zoom: 2.3, elevation: 62 * DEG },
+};
+const DEMO_START: Elements = {
+  a: 3.4,
+  e: 0.35,
+  i: 40 * DEG,
+  raan: 40 * DEG,
+  argp: 60 * DEG,
+  M: 30 * DEG,
+};
+const EXAMPLE_COLOR = '#ffd28a';
 const PRESETS: Preset[] = ['leo', 'gnss', 'moon', 'deep'];
 const KEYS = Object.keys(POSES.overview) as (keyof Pose)[];
 const ZOOM_RANGE = [0.75, 600];
@@ -362,6 +386,17 @@ export function OrbitView({
   const insetRight = useRef(0);
   const catalogRef = useRef<Catalog | null>(null);
   const fleetRef = useRef<Fleet | null>(fleet);
+  // --- Learn panel ----------------------------------------------------------
+  const [learnOpen, setLearnOpen] = useState(false);
+  const [orbitType, setOrbitType] = useState<OrbitTypeId | null>(null);
+  const [families, setFamilies] = useState<ReturnType<typeof classify> | null>(
+    null,
+  );
+  const [demo, setDemo] = useState<Elements>(DEMO_START);
+  const [demoShown, setDemoShown] = useState(false);
+  const focusMask = useRef<Uint8Array | null>(null);
+  const focusTarget = useRef(0);
+  const example = useRef<SceneView['example']>(null);
 
   useEffect(() => {
     text.current = sceneText(lang);
@@ -428,6 +463,73 @@ export function OrbitView({
     invalidate.current();
   }, [selected, model]);
 
+  /** Glide the camera to `target` from wherever it is, the short way round. */
+  const tweenTo = (target: Pose, duration: number) => {
+    const now = frameClock();
+    intro.current.done = true;
+    spin.current = { azimuth: 0, elevation: 0, at: 0 };
+    const current = poseAt(tween.current, now);
+    current.azimuth =
+      target.azimuth +
+      ((((current.azimuth - target.azimuth) % (2 * Math.PI)) + 3 * Math.PI) %
+        (2 * Math.PI)) -
+      Math.PI;
+    tween.current = {
+      from: current,
+      to: target,
+      start: now,
+      duration: reducedMotion() ? 1 : duration,
+    };
+    invalidate.current();
+  };
+
+  // Count the orbit families once, the first time the panel opens.
+  useEffect(() => {
+    if (!learnOpen || families || !fleet) return;
+    const timer = window.setTimeout(() => setFamilies(classify(fleet)), 0);
+    return () => window.clearTimeout(timer);
+  }, [learnOpen, families, fleet]);
+  const chooseType = (id: OrbitTypeId | null) => {
+    setOrbitType(id);
+    if (!id) return;
+    setDemoShown(false);
+    const pose = TYPE_POSES[id];
+    tweenTo(pose, 1800);
+  };
+  // The family's members stand out in the scene, with its example orbit.
+  useEffect(() => {
+    focusMask.current =
+      orbitType && families ? families.masks[orbitType] : null;
+    sceneRef.current?.setFocus(focusMask.current);
+    focusTarget.current = orbitType ? 1 : 0;
+    const type = ORBIT_TYPES.find(({ id }) => id === orbitType);
+    if (demoShown) {
+      example.current = {
+        elements: demo,
+        label: lang === 'en' ? 'Demo orbit' : '演示轨道',
+        color: EXAMPLE_COLOR,
+      };
+    } else if (type) {
+      // Turn the example's plane square to the camera: its node line runs
+      // across the screen.
+      const pose = TYPE_POSES[type.id];
+      // The Sun moves a degree a day: the clock's last set time is close enough.
+      const sun = sunDirection(clock.current.sim);
+      const raan = Math.atan2(sun[1], sun[0]) + pose.azimuth + Math.PI / 2;
+      example.current = {
+        elements: { ...type.example, raan },
+        label: lang === 'en' ? type.en : type.zh,
+        color: EXAMPLE_COLOR,
+      };
+    } else example.current = null;
+    invalidate.current();
+  }, [orbitType, families, demoShown, demo, lang]);
+  const closeLearn = () => {
+    setLearnOpen(false);
+    setOrbitType(null);
+    setDemoShown(false);
+  };
+
   /** Select a pass's satellite and run the clock through the pass at 60×,
    * starting half a minute early. */
   const playPass = (pass: Pass, observer: Observer) => {
@@ -444,30 +546,18 @@ export function OrbitView({
     const middle = (pass.start.time + pass.end.time) / 2;
     const site = groundPoint(observer.latitude, observer.longitude, middle);
     const sun = sunDirection(middle);
-    const now = frameClock();
-    intro.current.done = true;
-    spin.current = { azimuth: 0, elevation: 0, at: 0 };
-    const current = poseAt(tween.current, now);
-    const target: Pose = {
-      ...POSES.leo,
-      zoom: 1.7,
-      azimuth: Math.atan2(site[1], site[0]) - Math.atan2(sun[1], sun[0]),
-      elevation: Math.max(
-        -ELEVATION_LIMIT,
-        Math.min(ELEVATION_LIMIT, observer.latitude * DEG),
-      ),
-    };
-    current.azimuth =
-      target.azimuth +
-      ((((current.azimuth - target.azimuth) % (2 * Math.PI)) + 3 * Math.PI) %
-        (2 * Math.PI)) -
-      Math.PI;
-    tween.current = {
-      from: current,
-      to: target,
-      start: now,
-      duration: reducedMotion() ? 1 : 1800,
-    };
+    tweenTo(
+      {
+        ...POSES.leo,
+        zoom: 1.7,
+        azimuth: Math.atan2(site[1], site[0]) - Math.atan2(sun[1], sun[0]),
+        elevation: Math.max(
+          -ELEVATION_LIMIT,
+          Math.min(ELEVATION_LIMIT, observer.latitude * DEG),
+        ),
+      },
+      1800,
+    );
     // The preset buttons show near-Earth, without re-running its own tween.
     if (focus !== 'leo') {
       skipFocusTween.current = true;
@@ -805,7 +895,8 @@ export function OrbitView({
       else if (event.key === '-' || event.key === '_') zoomBy(1.25);
       else if (event.key === '?') setHelp(true);
       else if (event.key === 'Escape') {
-        if (passesOpen) setPassesOpen(false);
+        if (learnOpen) closeLearn();
+        else if (passesOpen) setPassesOpen(false);
         else if (selectedRef.current) select(null);
         else return;
       } else return;
@@ -837,6 +928,8 @@ export function OrbitView({
     for (const [id, on] of Object.entries(layersRef.current))
       weights[id as LayerId] = on ? 1 : 0;
     let previous = performance.now();
+    let focusWeight = 0;
+    let settlingFocus = false;
     // Bloom is dropped if the first frames are slow.
     const frameTimes: number[] = [];
     let bloomChecked = false;
@@ -911,7 +1004,12 @@ export function OrbitView({
 
       // Layer weights: a fifth of a second to fade.
       const blend = reduced.matches ? 1 : 1 - Math.exp(-dt / 180);
-      let settling = false;
+      focusWeight += (focusTarget.current - focusWeight) * blend;
+      if (Math.abs(focusTarget.current - focusWeight) < 0.002)
+        focusWeight = focusTarget.current;
+      else settlingFocus = true;
+      let settling = settlingFocus;
+      settlingFocus = false;
       for (const [id, on] of Object.entries(layersRef.current)) {
         const key = id as LayerId;
         const target = on ? 1 : 0;
@@ -935,6 +1033,8 @@ export function OrbitView({
         selected: selection.current,
         hovered: hovered.current,
         insetRight: insetRight.current,
+        focus: focusWeight,
+        example: example.current,
       };
       scene?.render(view, reduced.matches ? 0 : now, text.current);
       // What is under the mouse, for the next frame: the scene picks from the
@@ -1025,6 +1125,7 @@ export function OrbitView({
     // canvases on mount and only detach them on unmount.
     const rebuilt = () => {
       sceneRef.current = attached?.scene ?? null;
+      sceneRef.current?.setFocus(focusMask.current);
       resize();
     };
     // Development only: lets the browser console time and inspect the scene.
@@ -1212,6 +1313,22 @@ export function OrbitView({
               onPlay={playPass}
             />
           )}
+          {learnOpen && (
+            <LearnPanel
+              lang={lang}
+              counts={families?.counts ?? null}
+              active={orbitType}
+              onType={chooseType}
+              elements={demo}
+              onElements={setDemo}
+              showing={demoShown}
+              onShow={(show) => {
+                setDemoShown(show);
+                if (show) setOrbitType(null);
+              }}
+              onClose={closeLearn}
+            />
+          )}
         </div>
         {status === 'unsupported' && <Fallback lang={lang} />}
         {status === 'failed' && (
@@ -1287,6 +1404,19 @@ export function OrbitView({
             />
           </div>
           <output ref={readout} className="orbit-clock" />
+          <button
+            type="button"
+            className="orbit-icon-button"
+            aria-label={t('Learn about orbits', '轨道科普')}
+            title={t(
+              'Orbit types and the six elements',
+              '轨道类型与六个轨道根数',
+            )}
+            aria-pressed={learnOpen}
+            onClick={() => (learnOpen ? closeLearn() : setLearnOpen(true))}
+          >
+            <GraduationCap size={15} />
+          </button>
           <button
             type="button"
             className="orbit-icon-button"

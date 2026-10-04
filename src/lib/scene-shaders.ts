@@ -297,6 +297,7 @@ in vec3 position;
 in float group;
 in float recent;
 in float shade;
+in float focus;
 uniform float uDpr;
 uniform vec3 uSun;
 uniform float uAlpha[${GROUPS}];
@@ -308,6 +309,8 @@ uniform float uRecent;
 uniform float uClock;
 uniform float uHalo;
 uniform float uHaloAlpha;
+// Teaching mode: satellites with focus = 1 stand out, the rest fade.
+uniform float uFocus;
 out vec4 vColor;
 ${camera}
 void main() {
@@ -332,8 +335,19 @@ void main() {
     color = mix(color, vec3(0.78, 1.0, 0.55) * eclipse, uRecent * 0.75);
     alpha = min(1.0, alpha * (1.0 + 0.6 * uRecent));
   }
+  if (uFocus > 0.0) {
+    if (focus > 0.5) {
+      // Shown even where its layer is off: the lesson is about these.
+      alpha = screen.z < uNear || (cover > 0.5 && cover < 1.5) ? 0.0 : max(alpha, uFocus);
+      size *= 1.0 + 0.7 * uFocus;
+      color = mix(color, vec3(1.0, 0.93, 0.72), 0.45 * uFocus);
+    } else {
+      alpha *= 1.0 - 0.88 * uFocus;
+    }
+  }
   if (uHalo > 0.5) {
     if (g != 0) alpha = 0.0;
+    alpha *= 1.0 - uFocus;
     // Tinted by shell: blue at mid inclinations, violet toward polar.
     color = mix(vec3(0.42, 0.64, 1.0), vec3(0.72, 0.52, 1.0), shade) * eclipse;
     alpha *= uHaloAlpha;
