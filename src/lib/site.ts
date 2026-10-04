@@ -12,8 +12,8 @@ export const SOURCES = [
   {
     name: 'JPL Horizons',
     href: 'https://ssd.jpl.nasa.gov/horizons/',
-    zh: '航天器星历',
-    en: 'spacecraft ephemerides',
+    zh: '航天器星历与任务轨迹',
+    en: 'spacecraft ephemerides and mission trajectories',
   },
   {
     name: 'Natural Earth',

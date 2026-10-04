@@ -65,7 +65,7 @@ const round = (value, digits) => Number(value.toFixed(digits));
 
 /** Rotation from J2000 (ICRF) to the mean equator and equinox of date
  * (IAU 1976 precession), so JPL vectors share the page's frame. */
-function precession(time) {
+export function precession(time) {
   const T = (time / DAY + 2440587.5 - 2451545) / 36525;
   const arcsec = Math.PI / 648000;
   const zeta = (2306.2181 * T + 0.30188 * T * T + 0.017998 * T ** 3) * arcsec;
@@ -85,7 +85,7 @@ function precession(time) {
     [cx * st, -sx * st, ct],
   ];
 }
-const rotate = (matrix, [x, y, z]) =>
+export const rotate = (matrix, [x, y, z]) =>
   matrix.map((row) => row[0] * x + row[1] * y + row[2] * z);
 const stamp = (time) =>
   new Date(time).toISOString().slice(0, 23).replace('T', ' ');

@@ -18,7 +18,9 @@
     "format": "oxfmt",
     "data:fetch": "node scripts/fetch-orbits.mjs",
     "check:data": "node scripts/check-orbits.mjs",
-    "data:prepare": "node scripts/prepare-data.mjs"
+    "data:prepare": "node scripts/prepare-data.mjs",
+    "missions:fetch": "node scripts/fetch-missions.mjs",
+    "check:missions": "node scripts/check-missions.mjs"
   },
   "dependencies": {
     "d3-geo": "3.1.1",

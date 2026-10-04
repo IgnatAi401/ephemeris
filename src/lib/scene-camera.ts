@@ -1,7 +1,8 @@
-// The orbit view's perspective camera. It always looks at Earth's centre from
-// `distance` Earth radii away; `zoom` keeps the meaning it had under the old
+// The orbit view's perspective camera. It looks at `target` (Earth's centre
+// unless a mission replay follows the Moon or a spacecraft) from `distance`
+// Earth radii away; `zoom` keeps the meaning it had under the old
 // orthographic camera (Earth radii from the centre of the frame to its edge,
-// measured at Earth's distance), so the presets and tweens carry over.
+// measured at the target's distance), so the presets and tweens carry over.
 
 export type Vec3 = [number, number, number];
 
@@ -15,7 +16,7 @@ export type Camera = {
   center: [number, number];
   /** Pixels per unit of tangent: focal length of the pinhole, in px. */
   focal: number;
-  /** Pixels per Earth radius at Earth's distance. */
+  /** Pixels per Earth radius at the target's distance. */
   scale: number;
   distance: number;
   position: Vec3;
@@ -56,6 +57,7 @@ export function makeCamera(
   height: number,
   zoom: number,
   orientation: ReturnType<typeof basis>,
+  target: readonly number[] = [0, 0, 0],
 ): Camera {
   const focal = focalLength(height);
   const scale = frameHalf(width, height) / zoom;
@@ -70,9 +72,9 @@ export function makeCamera(
     scale,
     distance,
     position: [
-      toward[0] * distance,
-      toward[1] * distance,
-      toward[2] * distance,
+      target[0] + toward[0] * distance,
+      target[1] + toward[1] * distance,
+      target[2] + toward[2] * distance,
     ],
     right,
     up,
@@ -98,16 +100,26 @@ export function project(camera: Camera, p: readonly number[]): Vec3 {
   ];
 }
 
-/** 0: in clear view; 1: behind (or inside) a sphere of `radius` at the
- * origin; 2: in front of that sphere's disc. */
+/** 0: in clear view; 1: behind (or inside) a sphere of `radius` at
+ * `center` (the origin by default); 2: in front of that sphere's disc. */
 export function earthCover(
   camera: Camera,
-  p: readonly number[],
+  point: readonly number[],
   radius: number,
+  center?: readonly number[],
 ) {
+  const p = center
+    ? [point[0] - center[0], point[1] - center[1], point[2] - center[2]]
+    : point;
   const r2 = radius * radius;
   if (dot(p, p) < r2) return 1;
-  const o = camera.position;
+  const o = center
+    ? [
+        camera.position[0] - center[0],
+        camera.position[1] - center[1],
+        camera.position[2] - center[2],
+      ]
+    : camera.position;
   const d = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
   const length = Math.hypot(d[0], d[1], d[2]);
   const b = dot(o, d) / length;

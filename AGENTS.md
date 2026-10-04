@@ -1,6 +1,6 @@
 # ephemeris：orbit.ignat.ai 项目说明
 
-纯静态卫星轨道可视化站，部署到 GitHub Pages 的子域名 `orbit.ignat.ai`（计划仓库 `IgnatAi401/ephemeris`，公开）。优先级：炫酷展示 > 实用功能 > 科普内容。分阶段计划见 `/Users/ignat/.claude/plans/wondrous-floating-turing.md`。
+纯静态卫星轨道可视化站，部署到 GitHub Pages 的子域名 `orbit.ignat.ai`（计划仓库 `IgnatAi401/ephemeris`，公开）。优先级：炫酷展示 > 实用功能 > 科普内容。分阶段计划见 `/Users/ignat/.claude/plans/wondrous-floating-turing.md`（阶段 0–5）和项目内的 `missions-plan.md`（阶段 6 起：历史任务回放）。
 
 ## 来源与只读约束
 
@@ -33,17 +33,27 @@
   - 场景的教学模式：`OrbitScene.setFocus(mask)` 加 `SceneView.focus`（0–1）让该类卫星突出、其余变暗；`SceneView.example` 用经典根数画一条虚线示例轨道（`src/lib/kepler.ts`）。
   - `src/components/learn-panel.tsx`：“轨道类型”和“轨道六根数”两个标签页；`elements-demo.tsx` 是可拖动旋转的二维小图，六个滑块分别标出 a、e、i、Ω、ω、M（以真近点角 ν 表示）并给出说明，可把演示轨道画进主视图（Ω 从真实春分点方向量起，轨道超出当前画面时镜头自动拉远）。a 的滑块按对数刻度，范围 1.1–64 地球半径（到月球距离），e 最大 0.98；远地点超过约 6 个地球半径后画面比例随之缩小，并显示月球距离圈。
   - 文案全部中英双语，默认中文。
+- 历史任务回放（阶段 6，计划见 `missions-plan.md`）：
+  - `src/lib/missions.ts`：任务表（`MISSIONS`）：中英文名称和讲解、发射时间、各航天器颜色、可选参考系、阶段（起始时间、讲解、镜头 `shot`、播放速度、自动导览切换到的参考系）和关键事件。事件时间取自机构公布的时间线，并用数据核对过（近月点、最远距离、点火都能在矢量里看出来）。会被 Node 脚本直接导入，只能用可擦除的 TS 语法、不引入其他模块。
+  - `src/lib/mission-track.ts`：按需加载 `public/missions/<id>.json`，三次 Hermite 插值；四种参考系 `earth`（地心）、`moon`（月心）、`earthMoon`（地月旋转，按当时地月距离归一化，月球保持不动）、`sunEarth`（日地旋转，绕黄道极转）。轨迹先按“离较近天体约 3° 弧”加密，再存成各参考系的局部坐标（首次用到时生成）。
+  - 场景：`SceneView.mission` 时隐藏全部卫星群和今天的深空航天器，月球改用任务数据里的月球（解析公式误差约 2000 km，大于月球半径）；轨迹在 GPU 上画成带宽度的条带（`pathVertex`/`pathFragment`，已飞部分亮、其余暗，被地球或月球挡住的部分不画，参与 Bloom），每个航天器每种参考系一个网格；事件菱形、航天器标记和标签在 2D 层。镜头：`aimMoon`/`aimCraft` 权重决定看向地球、月球还是航天器，`aimX/Y/Z` 是在 `cameraAxes`（参考系的坐标轴，镜头随参考系一起转）里的偏移，用来把轨迹放在面板留出的空间中间。
+  - `orbit-view.tsx`：进入任务后时钟范围换成任务时段，时间标尺换成 `src/lib/mission-tape.ts`（滚轮缩放比例，标出事件），速度档为 1 分/秒到 1 天/秒；“自动”导览在进入新阶段时切换镜头、速度和参考系，用户缩放、改速度或手选参考系时关闭。初始视角取轨迹按长度加权后最“薄”的方向（再倾斜 25°），“全程”按轨迹在屏幕上的范围取景并保证相机离轨迹足够远，避免透视变形。
+  - `src/components/mission-panel.tsx`：任务列表；回放中显示讲解、实时读数（任务时间 T+、速度、距地面、距月面，由帧循环直接写入 DOM）、镜头和参考系按钮、可点击跳转的事件列表（跳到事件前 20 分钟）。
+  - 分享链接多 `m`（任务）和 `fr`（参考系）；带任务的链接打开后暂停在该时刻、不开自动导览。快捷键：回放中 1/2/3 为全程/月球/飞行器镜头，0 打开自动导览，`[`/`]` 跳到上一个/下一个事件，N 退出。
 - `scripts/fetch-orbits.mjs`、`scripts/check-orbits.mjs`：抓取与离线校验。
+- `scripts/fetch-missions.mjs`、`scripts/check-missions.mjs`：任务轨迹的一次性抓取与校验（见“数据管线”）。
+- `public/missions/`：任务轨迹，**进 Git**（历史数据不会变）；来源与处理见同目录 `README.md`。
 - `public/data/`：抓取产物，**不进 Git**，只随构建部署。
 - `public/textures/night-lights.webp`：NASA Black Marble 2016 夜光（来源与处理见同目录 `README.md`）。
-- 开发模式下 `window.__orbitScene()` 返回当前场景对象，便于在控制台计时或检查（生产构建不包含）。
+- 开发模式下 `window.__orbitScene()` 返回当前场景对象、`window.__mission()` 返回正在回放的任务状态，便于在控制台计时或检查（生产构建不包含）。
 - `orbits.ts` 和 `ephemeris.ts` 会被 Node 脚本直接导入（类型剥离），只能用可擦除的 TS 语法，且不要引入其他模块。
 
 ## 命令
 
 - 依赖：`pnpm install --frozen-lockfile`（Node 版本见 `.node-version`，pnpm 见 `packageManager`）。
 - 预览：`pnpm dev` → `http://127.0.0.1:3001/`（3000 留给主站；端口被占用时不擅自换端口）。按 `Ctrl+C` 停止。
-- 日常检查：`pnpm typecheck`、`pnpm lint`、`pnpm check:data`。
+- 日常检查：`pnpm typecheck`、`pnpm lint`、`pnpm check:data`、`pnpm check:missions`。
+- 任务轨迹：`pnpm missions:fetch [任务 id …]`，只在新增任务或改时段时手动运行（下载有缓存，在 `.cache/horizons-missions/`）。
 - 抓取数据：`pnpm data:fetch`（`--only=constellations`、`--only=spacecraft` 只刷新一部分，`--only=status` 只重建 status.json）。
 - 按工作流方式准备数据：`pnpm data:prepare --constellations=fetch|live --spacecraft=fetch|live`。
 - 构建：`pnpm build`，**只在验证部署流程或用户要求时运行**。
@@ -62,12 +72,14 @@
 - 抓取礼仪：同一分组 2 小时内最多下载一次（`.cache/celestrak/` 缓存，`fetched` 记最早的下载时间）；User-Agent `ephemeris-orbit/<version> (+https://orbit.ignat.ai)`；5/20/60 秒退避，4xx（除 408/429）不重试。浏览器端**永远不直接请求** CelesTrak 或 Horizons。
 - 闰秒表 `time-scales.mjs` 的 `LEAP_TABLE_VALID_UNTIL` 到期后抓取会报错：读最新 IERS Bulletin C（每年 1 月、7 月发布）后更新表格和有效期。
 - `check-orbits.mjs`：各组非空（`recent` 除外）；±7 天半径在各 kind 的壳层内；catalog 与 orbits 对齐、编号不重复；与 `status/status.json`（上次成功部署的基线）比较，任一组减少超过 20% 且超过 3 颗即失败（`recent` 除外），确认属实后用 `--accept-drop` 放行；航天器距离合理；体积预算 orbits/catalog ≤ 1.5 MB、spacecraft ≤ 200 kB、status ≤ 20 kB。
+- 任务轨迹（`scripts/fetch-missions.mjs`，不进定时工作流）：每个任务在脚本的 `MISSIONS` 里写明 Horizons 编号和 UTC 时段（时段须落在 Horizons 覆盖范围内，加任务前先用 Horizons API 查起止）。先按粗步长抓全程，再对离地 < 6 万 km 或离月 < 1.5 万 km 的时段按 1 分钟重抓；剔除速度与前后位置差分相差 > 100 m/s 的行（Horizons 文件在小点火附近偶有拟合很差的片段）；转到瞬时平赤道后按 Hermite 误差 0.5 km（远处略放宽）抽稀；月球每 3 小时一个点。Horizons 下载永久缓存在 `.cache/horizons-missions/`。
+- `check-missions.mjs`（CI 的 build job 也跑）：每个任务都有数据文件且 ≤ 300 kB；航天器数量一致、时间递增、半径与速度合理；月球覆盖全程；阶段按时间排序且在数据范围内、阶段参考系是可选项；事件在数据范围内；发射早于数据开始。
 
 ## 发布
 
 - 工作流 `.github/workflows/update-and-deploy.yml`：
   - 触发：`schedule` 每天 03:17、15:17（UTC）抓 CelesTrak；周一早上那次同时抓 Horizons（每周一次）；`workflow_dispatch` 手动，可勾选“立即刷新 Horizons”和“接受数量下降”（对应 `--accept-drop`）；push 到 `main` 只部署代码，数据取线上现有版本。
-  - build job：安装 → typecheck → lint → 恢复 `.cache/celestrak`（跨运行保证 2 小时规则）→ `scripts/prepare-data.mjs` → `pnpm build` → 上传 Pages 产物和 status 产物。
+  - build job：安装 → typecheck → lint → check:missions → 恢复 `.cache/celestrak`（跨运行保证 2 小时规则）→ `scripts/prepare-data.mjs` → `pnpm build` → 上传 Pages 产物和 status 产物。
   - `prepare-data.mjs`：每部分先用首选来源（`fetch` 抓取或 `live` 从 `https://orbit.ignat.ai/data/` 取回），失败再用另一个；航天器两者都失败时不带航天器部署。然后跑 `check-orbits`；新抓的数据不过校验时换回线上版本再校验，通过则照常部署，但最后的 `report` job 让本次运行失败以便收到通知；线上版本也不可用时整次运行失败、不部署（线上保持旧版）。本地测试可用 `SITE_ORIGIN=http://127.0.0.1:3001` 指向本地 preview。
   - deploy job（`pages: write`、`id-token: write`）→ commit-status job（`contents: write`，只在定时/手动运行时把 `status/status.json` 提交回 `main`）。`concurrency: pages`，排队不取消。
 - 抓取的数据不进 Git；`status/status.json` 是校验的基线，只由工作流更新（或本地确认后手动更新）。
