@@ -17,8 +17,12 @@ import { basis } from '@/lib/scene-camera';
 
 const DEG = Math.PI / 180;
 type Key = keyof Elements;
-// Fixed scale, so changing the semi-major axis visibly changes the size.
+// Fixed scale out to geostationary height, so changing the semi-major axis
+// visibly changes the size; beyond that the frame backs off to keep the
+// apogee in view.
 const VIEW_RADIUS = 5.6;
+// The Moon's mean distance, Earth radii.
+const MOON_DISTANCE = 384400 / 6378.137;
 
 const SLIDERS: {
   key: Key;
@@ -27,6 +31,8 @@ const SLIDERS: {
   max: number;
   step: number;
   unit: 'Re' | '°' | '';
+  /** The slider moves in the logarithm of the value. */
+  log?: boolean;
   zh: [string, string];
   en: [string, string];
 }[] = [
@@ -34,20 +40,24 @@ const SLIDERS: {
     key: 'a',
     symbol: 'a',
     min: 1.1,
-    max: 7,
-    step: 0.01,
+    max: 64,
+    step: 0.001,
     unit: 'Re',
-    zh: ['半长轴', '轨道的大小：越大离地球越远、周期越长（周期只取决于 a）。'],
+    log: true,
+    zh: [
+      '半长轴',
+      '轨道的大小：越大离地球越远、周期越长（周期只取决于 a）。滑块按比例变化，近处细、远处粗，一直到月球距离。',
+    ],
     en: [
       'Semi-major axis',
-      'The size of the orbit: larger means farther out and slower; the period depends on a alone.',
+      'The size of the orbit: larger means farther out and slower; the period depends on a alone. The slider is proportional, fine near Earth and coarse out to the Moon.',
     ],
   },
   {
     key: 'e',
     symbol: 'e',
     min: 0,
-    max: 0.8,
+    max: 0.98,
     step: 0.005,
     unit: '',
     zh: [
@@ -173,12 +183,30 @@ export const PRESETS: {
       M: 0,
     },
   },
+  {
+    id: 'tli',
+    zh: '地月转移',
+    en: 'To the Moon',
+    elements: {
+      a: 30.67,
+      e: 0.9664,
+      i: 28.5 * DEG,
+      raan: 130 * DEG,
+      argp: 180 * DEG,
+      M: 0,
+    },
+  },
 ];
 
 const display = (key: Key, value: number) =>
   key === 'a' || key === 'e' ? value : value / DEG;
 const store = (key: Key, value: number) =>
   key === 'a' || key === 'e' ? value : value * DEG;
+// Slider positions, in the logarithm for a log slider.
+const toSlider = (log: boolean | undefined, value: number) =>
+  log ? Math.log(value) : value;
+const fromSlider = (log: boolean | undefined, value: number) =>
+  log ? Math.exp(value) : value;
 
 /** The six classical elements, one slider each, on a small orbit you can
  * turn by dragging. The element last moved is drawn bright and explained. */
@@ -196,6 +224,8 @@ export function ElementsDemo({
   const [active, setActive] = useState<Key>('i');
   const [playing, setPlaying] = useState(false);
   const view = useRef({ azimuth: 35 * DEG, elevation: 24 * DEG });
+  // Earth radii from the centre to the frame's edge, eased toward its target.
+  const reach = useRef(VIEW_RADIUS);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const latest = useRef({ elements, active, onChange });
   useEffect(() => {
@@ -241,7 +271,11 @@ export function ElementsDemo({
         view.current.elevation,
         view.current.azimuth,
       );
-      const scale = (Math.min(width, height) / 2 - 6) / VIEW_RADIUS;
+      const target = Math.max(VIEW_RADIUS, el.a * (1 + el.e) * 1.1);
+      reach.current += (target - reach.current) * Math.min(1, dt / 160);
+      // Markings grow with the frame, so they stay legible far out.
+      const k = reach.current / VIEW_RADIUS;
+      const scale = (Math.min(width, height) / 2 - 6) / reach.current;
       const cx = width / 2;
       const cy = height / 2;
       const dot = (a: readonly number[], b: readonly number[]) =>
@@ -270,8 +304,8 @@ export function ElementsDemo({
         }
         if (close) context.closePath();
       };
-      const range = (n: number, f: (k: number) => number[]) =>
-        Array.from({ length: n + 1 }, (_, k) => f(k / n));
+      const range = (n: number, f: (fraction: number) => number[]) =>
+        Array.from({ length: n + 1 }, (_, step) => f(step / n));
       const isActive = (key: Key) => latest.current.active === key;
       const accent = (key: Key, alpha = 1) =>
         isActive(key)
@@ -294,9 +328,9 @@ export function ElementsDemo({
       context.fillStyle = 'rgba(120, 140, 255, 0.05)';
       context.strokeStyle = 'rgba(160, 170, 230, 0.22)';
       context.lineWidth = 1;
-      const rim = range(96, (k) => [
-        Math.cos(k * 2 * Math.PI) * 5.2,
-        Math.sin(k * 2 * Math.PI) * 5.2,
+      const rim = range(96, (f) => [
+        Math.cos(f * 2 * Math.PI) * 5.2 * k,
+        Math.sin(f * 2 * Math.PI) * 5.2 * k,
         0,
       ]);
       context.beginPath();
@@ -308,15 +342,35 @@ export function ElementsDemo({
       context.setLineDash([3, 4]);
       path([
         [0, 0, 0],
-        [5.2, 0, 0],
+        [5.2 * k, 0, 0],
       ]);
       context.stroke();
       context.setLineDash([]);
       text(
         tr('♈ equinox', '♈ 春分点'),
-        [5.35, 0, 0],
+        [5.35 * k, 0, 0],
         'rgba(200, 205, 240, 0.7)',
       );
+      // Far out, the Moon's distance for scale (a sphere, drawn as the
+      // circle facing the viewer).
+      const lunar = Math.min(1, Math.max(0, (reach.current - 14) / 20));
+      if (lunar > 0.01) {
+        const radius = MOON_DISTANCE * scale;
+        context.setLineDash([2, 5]);
+        context.strokeStyle = `rgba(200, 205, 240, ${0.35 * lunar})`;
+        context.beginPath();
+        context.arc(cx, cy, radius, 0, Math.PI * 2);
+        context.stroke();
+        context.setLineDash([]);
+        context.font = `500 10px ${font}`;
+        context.textAlign = 'center';
+        context.fillStyle = `rgba(200, 205, 240, ${0.6 * lunar})`;
+        context.fillText(
+          tr('Moon’s distance', '月球距离'),
+          cx,
+          cy - radius - 4,
+        );
+      }
 
       // Earth.
       const [ex, ey] = at([0, 0, 0]);
@@ -336,9 +390,9 @@ export function ElementsDemo({
       context.fill();
       context.strokeStyle = 'rgba(200, 220, 255, 0.4)';
       path(
-        range(64, (k) => [
-          Math.cos(k * 2 * Math.PI),
-          Math.sin(k * 2 * Math.PI),
+        range(64, (f) => [
+          Math.cos(f * 2 * Math.PI),
+          Math.sin(f * 2 * Math.PI),
           0,
         ]),
       );
@@ -358,8 +412,8 @@ export function ElementsDemo({
       ];
       const inPlane = cross(normal, node);
       const perigeeDir = node.map(
-        (value, k) =>
-          value * Math.cos(el.argp) + inPlane[k] * Math.sin(el.argp),
+        (value, j) =>
+          value * Math.cos(el.argp) + inPlane[j] * Math.sin(el.argp),
       );
       const arc = (
         center: number[],
@@ -368,17 +422,18 @@ export function ElementsDemo({
         angle: number,
         radius: number,
       ) =>
-        range(48, (k) =>
+        range(48, (f) =>
           center.map(
             (c, j) =>
               c +
               radius *
-                (u[j] * Math.cos(k * angle) + v[j] * Math.sin(k * angle)),
+                k *
+                (u[j] * Math.cos(f * angle) + v[j] * Math.sin(f * angle)),
           ),
         );
 
       // Orbit: a faint fill of its plane, then the ellipse.
-      const ellipse = range(180, (k) => orbitPoint(el, k * 2 * Math.PI));
+      const ellipse = range(360, (f) => orbitPoint(el, f * 2 * Math.PI));
       context.fillStyle = 'rgba(159, 240, 200, 0.05)';
       context.beginPath();
       ellipse.forEach((p, index) =>
@@ -409,7 +464,7 @@ export function ElementsDemo({
       context.setLineDash([]);
       text(
         '☊',
-        node.map((v) => v * (nodeRadius + 0.5)),
+        node.map((v) => v * (nodeRadius + 0.5 * k)),
         accent('raan'),
         'center',
       );
@@ -421,7 +476,7 @@ export function ElementsDemo({
       context.stroke();
       text(
         'Ω',
-        [Math.cos(el.raan / 2) * 3, Math.sin(el.raan / 2) * 3, 0],
+        [Math.cos(el.raan / 2) * 3 * k, Math.sin(el.raan / 2) * 3 * k, 0],
         accent('raan'),
         'center',
       );
@@ -433,7 +488,7 @@ export function ElementsDemo({
       context.strokeStyle = accent('i');
       path(arc(nodePoint, eastward, [0, 0, 1], el.i, 1.1));
       context.stroke();
-      path([nodePoint, nodePoint.map((c, j) => c + eastward[j] * 1.6)]);
+      path([nodePoint, nodePoint.map((c, j) => c + eastward[j] * 1.6 * k)]);
       context.stroke();
       text(
         'i',
@@ -441,6 +496,7 @@ export function ElementsDemo({
           (c, j) =>
             c +
             1.5 *
+              k *
               (eastward[j] * Math.cos(el.i / 2) +
                 (j === 2 ? Math.sin(el.i / 2) : 0)),
         ),
@@ -458,7 +514,8 @@ export function ElementsDemo({
       text(
         'ω',
         node.map(
-          (v, k) => 2.3 * (v * Math.cos(half) + inPlane[k] * Math.sin(half)),
+          (v, j) =>
+            2.3 * k * (v * Math.cos(half) + inPlane[j] * Math.sin(half)),
         ),
         accent('argp'),
         'center',
@@ -482,7 +539,7 @@ export function ElementsDemo({
       }
       text(
         tr('perigee', '近地点'),
-        perigee.map((v) => v * 1.12),
+        perigeeDir.map((v) => v * (el.a * (1 - el.e) * 1.12 + 0.5 * (k - 1))),
         'rgba(223, 218, 245, 0.7)',
         'center',
       );
@@ -542,6 +599,7 @@ export function ElementsDemo({
 
   const slider = SLIDERS.find(({ key }) => key === active)!;
   const [perigee, apogee] = apsides(elements);
+  const minutes = periodMinutes(elements.a);
   return (
     <div className="orbit-demo">
       <canvas
@@ -566,7 +624,7 @@ export function ElementsDemo({
         <p>{t(slider.en[1], slider.zh[1])}</p>
       </div>
       <div className="orbit-demo-sliders">
-        {SLIDERS.map(({ key, symbol, min, max, step, unit, zh, en }) => {
+        {SLIDERS.map(({ key, symbol, min, max, step, unit, log, zh, en }) => {
           const value = display(key, elements[key]);
           return (
             <label key={key} data-active={key === active || undefined}>
@@ -574,17 +632,20 @@ export function ElementsDemo({
               <span className="orbit-demo-name">{t(en[0], zh[0])}</span>
               <input
                 type="range"
-                min={min}
-                max={max}
+                min={toSlider(log, min)}
+                max={toSlider(log, max)}
                 step={step}
-                value={value}
+                value={toSlider(log, value)}
                 onFocus={() => setActive(key)}
                 onPointerDown={() => setActive(key)}
                 onChange={(event) => {
                   setActive(key);
                   onChange({
                     ...elements,
-                    [key]: store(key, Number(event.currentTarget.value)),
+                    [key]: store(
+                      key,
+                      fromSlider(log, Number(event.currentTarget.value)),
+                    ),
                   });
                 }}
               />
@@ -602,8 +663,10 @@ export function ElementsDemo({
       </div>
       <div className="orbit-demo-derived">
         <span>
-          {t('Period', '周期')} {periodMinutes(elements.a).toFixed(0)}{' '}
-          {t('min', '分钟')}
+          {t('Period', '周期')}{' '}
+          {minutes < 1440
+            ? `${minutes.toFixed(0)} ${t('min', '分钟')}`
+            : `${(minutes / 1440).toFixed(1)} ${t('days', '天')}`}
         </span>
         <span>
           {t('Perigee', '近地点')} {Math.round(perigee).toLocaleString('en-US')}{' '}
@@ -629,6 +692,14 @@ export function ElementsDemo({
           {playing ? <Pause size={13} /> : <Play size={13} />}
         </button>
       </div>
+      {apogee > 300000 && perigee >= 0 && (
+        <p className="orbit-demo-note">
+          {t(
+            `The apogee reaches the Moon’s distance: a trans-lunar transfer. Perigee to apogee takes half a period, about ${(minutes / 2880).toFixed(1)} days; near the Moon its gravity takes over and these elements no longer describe the path.`,
+            `远地点已到月球距离：这就是地月转移轨道。从近地点飞到远地点要半个周期，约 ${(minutes / 2880).toFixed(1)} 天；飞近月球后月球引力占主导，这组根数就不再适用。`,
+          )}
+        </p>
+      )}
       {perigee < 0 && (
         <p className="orbit-demo-warning">
           {t(

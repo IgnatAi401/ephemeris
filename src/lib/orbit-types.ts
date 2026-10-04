@@ -2,7 +2,7 @@
 // from an element set, and an example orbit to draw when the snapshot has no
 // member (or to show the shape alongside the real ones).
 import type { Elements } from '@/lib/kepler';
-import { EARTH_RADIUS_KM, type Fleet } from '@/lib/orbits';
+import { EARTH_RADIUS_KM, moonPosition, type Fleet } from '@/lib/orbits';
 
 const DEG = Math.PI / 180;
 const MU = 398600.4418;
@@ -11,7 +11,14 @@ const DAY = 86400000;
 // node must match (rad/ms).
 const SUN_RATE = (2 * Math.PI) / (365.2422 * DAY);
 
-export type OrbitTypeId = 'leo' | 'meo' | 'geo' | 'heo' | 'molniya' | 'sso';
+export type OrbitTypeId =
+  | 'leo'
+  | 'meo'
+  | 'geo'
+  | 'heo'
+  | 'molniya'
+  | 'sso'
+  | 'tli';
 
 type Sample = {
   /** Mean motion, rev/day. */
@@ -33,6 +40,8 @@ export const ORBIT_TYPES: {
   about: [string, string];
   test: (s: Sample) => boolean;
   example: Elements;
+  /** In place of the generic note when the snapshot has no member. */
+  none?: [string, string];
 }[] = [
   {
     id: 'leo',
@@ -120,7 +129,79 @@ export const ORBIT_TYPES: {
       Math.abs(s.raanDot - SUN_RATE) < 0.1 * SUN_RATE,
     example: { a: 1.11, e: 0.001, i: 98.2 * DEG, raan: 0, argp: 0, M: 0 },
   },
+  {
+    id: 'tli',
+    zh: '地月转移轨道',
+    en: 'Trans-lunar transfer',
+    short: ['from a parking orbit out to the Moon', '从停泊轨道一路伸到月球'],
+    about: [
+      'Not a place to stay but a road: a burn in a low parking orbit stretches it into a long ellipse whose apogee reaches the Moon, 380,000 km out. The apogee has to arrive together with the Moon, so the spacecraft aims at where the Moon will be days later. The thriftiest, Hohmann-like route takes about five days; Apollo flew a little faster by putting the apogee beyond the Moon. Near the Moon its gravity takes over, and the spacecraft brakes into lunar orbit; Chang’e and Chandrayaan first loop around Earth a few times, raising the apogee step by step.',
+      '这不是长期停留的轨道，而是一段路程：在近地停泊轨道上点火加速，轨道被拉成细长的椭圆，远地点一直伸到 38 万 km 外的月球。远地点必须和月球同时到达同一位置，所以出发时要瞄准月球几天后所在的地方。最省燃料的霍曼式转移单程约 5 天；阿波罗把远地点放在月球之外，3 天左右就能到。飞近月球后月球引力占主导，探测器减速进入环月轨道；嫦娥、月船等任务则先绕地球几圈，逐步抬高远地点。',
+    ],
+    test: (s) => s.apogee > 150000,
+    example: {
+      a: 30.67,
+      e: 0.9664,
+      i: 28.5 * DEG,
+      raan: 0,
+      argp: 180 * DEG,
+      M: 0,
+    },
+    none: [
+      'Nothing in the current snapshot is on its way to the Moon. The dashed line is worked out from the real Moon: leave now, and the apogee meets it about five days later. The clock runs at 3600× to show the trip.',
+      '当前数据中没有正在飞往月球的目标。虚线按真实月球位置算出：探测器此刻出发，约 5 天后在远地点与月球相遇。时钟已调到 3600× 演示这段飞行。',
+    ],
+  },
 ];
+
+// A 200 km parking orbit, where trans-lunar burns usually start.
+const PARKING = 1 + 200 / EARTH_RADIUS_KM;
+
+/** A Hohmann-style trip to the Moon leaving perigee at `depart`: the apogee
+ * sits where the Moon will be on arrival, the plane is the Moon's own, and
+ * the flight takes half the ellipse's period. */
+export function lunarTransfer(depart: number) {
+  let flight = 5 * DAY;
+  let moon = moonPosition(depart + flight);
+  // Arrival fixes the apogee distance, which fixes the flight time; a few
+  // rounds settle both.
+  for (let round = 0; round < 4; round++) {
+    const a = ((PARKING + Math.hypot(...moon)) / 2) * EARTH_RADIUS_KM;
+    flight = Math.PI * Math.sqrt(a ** 3 / MU) * 1000;
+    moon = moonPosition(depart + flight);
+  }
+  const r = Math.hypot(...moon);
+  // The orbit normal follows the Moon's motion around Earth.
+  const ahead = moonPosition(depart + flight + DAY / 24);
+  const normal = [
+    moon[1] * ahead[2] - moon[2] * ahead[1],
+    moon[2] * ahead[0] - moon[0] * ahead[2],
+    moon[0] * ahead[1] - moon[1] * ahead[0],
+  ];
+  const length = Math.hypot(...normal);
+  const [hx, hy, hz] = normal.map((value) => value / length);
+  const raan = Math.atan2(hx, -hy);
+  // In-plane axes: toward the ascending node, and 90° on along the motion.
+  const node = [Math.cos(raan), Math.sin(raan), 0];
+  const along = [
+    hy * node[2] - hz * node[1],
+    hz * node[0] - hx * node[2],
+    hx * node[1] - hy * node[0],
+  ];
+  // Perigee lies opposite the meeting point.
+  const perigee = moon.map((value) => -value / r);
+  const dot = (a: number[], b: number[]) =>
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const elements: Elements = {
+    a: (PARKING + r) / 2,
+    e: (r - PARKING) / (r + PARKING),
+    i: Math.acos(hz),
+    raan,
+    argp: Math.atan2(dot(perigee, along), dot(perigee, node)),
+    M: 0,
+  };
+  return { elements, depart, arrive: depart + flight };
+}
 
 /** For each orbit type, a 0/1 mask over the fleet and its count. */
 export function classify(fleet: Fleet) {

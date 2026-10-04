@@ -22,6 +22,7 @@ export function LayerPanel({
   open,
   onOpenChange,
   onToggle,
+  onSetAll,
 }: {
   lang: Language;
   layers: Layers;
@@ -30,6 +31,7 @@ export function LayerPanel({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onToggle: (id: LayerId) => void;
+  onSetAll: (on: boolean) => void;
 }) {
   const t = (en: string, zh: string) => (lang === 'en' ? en : zh);
   const groupRows = (kinds: readonly ConstellationKind[]) => {
@@ -70,25 +72,40 @@ export function LayerPanel({
       rows: VISUAL_LAYERS.map(({ id, en, zh }) => ({ id, label: t(en, zh) })),
     },
   ];
+  const allOn = sections.every((section) =>
+    section.rows.every((row) => layers[row.id]),
+  );
 
   return (
     <div className="orbit-key" data-open={open || undefined}>
-      <button
-        type="button"
-        className="orbit-key-toggle"
-        aria-expanded={open}
-        aria-controls="orbit-layers"
-        onClick={() => onOpenChange(!open)}
-      >
-        <LayersIcon size={13} aria-hidden="true" />
-        {t('Layers', '图层')}
-        <kbd>L</kbd>
-        <ChevronDown
-          size={13}
-          aria-hidden="true"
-          className="orbit-key-chevron"
-        />
-      </button>
+      <div className="orbit-key-head">
+        <button
+          type="button"
+          className="orbit-key-toggle"
+          aria-expanded={open}
+          aria-controls="orbit-layers"
+          onClick={() => onOpenChange(!open)}
+        >
+          <LayersIcon size={13} aria-hidden="true" />
+          {t('Layers', '图层')}
+          <kbd>L</kbd>
+          <ChevronDown
+            size={13}
+            aria-hidden="true"
+            className="orbit-key-chevron"
+          />
+        </button>
+        {open && (
+          <button
+            type="button"
+            className="orbit-key-all"
+            aria-pressed={allOn}
+            onClick={() => onSetAll(!allOn)}
+          >
+            {allOn ? t('None', '取消全选') : t('All', '全选')}
+          </button>
+        )}
+      </div>
       <div id="orbit-layers" className="orbit-key-body" hidden={!open}>
         {sections.map((section) => (
           <div

@@ -48,7 +48,7 @@ export function LearnPanel({
             aria-pressed={tab === 'elements'}
             onClick={() => setTab('elements')}
           >
-            {t('Six elements', '六个轨道根数')}
+            {t('Six elements', '轨道六根数')}
           </button>
         </div>
         <button
@@ -93,10 +93,12 @@ export function LearnPanel({
                       <p>{t(type.about[0], type.about[1])}</p>
                       {count === 0 && (
                         <p className="orbit-type-none">
-                          {t(
-                            'None in the current snapshot: only the example orbit is drawn.',
-                            '当前数据中没有这类卫星，只画出示例轨道。',
-                          )}
+                          {type.none
+                            ? t(type.none[0], type.none[1])
+                            : t(
+                                'None in the current snapshot: only the example orbit is drawn.',
+                                '当前数据中没有这类卫星，只画出示例轨道。',
+                              )}
                         </p>
                       )}
                     </div>
