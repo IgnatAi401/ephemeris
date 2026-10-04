@@ -383,6 +383,7 @@ export function OrbitView({
   const hovered = useRef<{ index: number; label: string } | null>(null);
   const press = useRef<{ x: number; y: number; at: number } | null>(null);
   const side = useRef<HTMLDivElement>(null);
+  const dock = useRef<HTMLDivElement>(null);
   const insetRight = useRef(0);
   const catalogRef = useRef<Catalog | null>(null);
   const fleetRef = useRef<Fleet | null>(fleet);
@@ -1172,12 +1173,22 @@ export function OrbitView({
         panel && box.clientWidth > 760 ? panel.offsetWidth + 12 : 0;
       loop.invalidate();
     };
+    // The floating dock's height, for the panels that must stop above it.
+    const measureDock = () => {
+      const bar = dock.current;
+      bar?.parentElement?.style.setProperty(
+        '--dock-h',
+        `${bar.offsetHeight}px`,
+      );
+    };
     const observer = new ResizeObserver(() => {
       resize();
       measureSide();
+      measureDock();
     });
     observer.observe(box);
     if (side.current) observer.observe(side.current);
+    if (dock.current) observer.observe(dock.current);
     observer.observe(ruler);
     // Sideways trackpad swipes (or shift + wheel) scroll the tape.
     const tapeWheel = (event: WheelEvent) => {
@@ -1340,7 +1351,7 @@ export function OrbitView({
           </p>
         )}
       </div>
-      <div className="orbit-dock">
+      <div className="orbit-dock" ref={dock}>
         <div className="orbit-timeline">
           <button
             type="button"

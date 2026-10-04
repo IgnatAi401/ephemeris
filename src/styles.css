@@ -34,7 +34,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---------- App shell: the scene fills the screen above a slim dock ---------- */
+/* ---------- App shell: the scene fills the screen; the dock floats over it ---------- */
 .app {
   position: fixed;
   inset: 0;
@@ -87,19 +87,25 @@ body {
 
 /* ---------- Orbit view (adapted from the personal site's academic page) ---------- */
 .orbit-map {
-  display: flex;
+  position: relative;
   flex: 1 1 auto;
-  flex-direction: column;
   min-height: 0;
   container-type: inline-size;
 }
 .orbit-map-stage {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
 }
+/* Floats over the bottom of the scene. Only the controls themselves catch
+   the pointer; drags in the gaps between them still reach the scene. Its
+   height is published as --dock-h so panels can stop above it. */
 .orbit-dock {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -109,6 +115,28 @@ body {
   padding: 8px calc(16px + env(safe-area-inset-right))
     calc(10px + env(safe-area-inset-bottom))
     calc(16px + env(safe-area-inset-left));
+  pointer-events: none;
+}
+.orbit-dock > .orbit-timeline,
+.orbit-legend button,
+.app-bar > * {
+  pointer-events: auto;
+}
+/* A soft shade under the dock keeps its text readable over a bright Earth. */
+.orbit-map::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  height: calc(var(--dock-h, 0px) + 24px);
+  background: linear-gradient(to top, rgba(7, 8, 15, 0.7), transparent);
+  pointer-events: none;
+}
+.app-bar h1,
+.orbit-credits {
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
 }
 .orbit-dock > .orbit-legend {
   order: 1;
@@ -235,7 +263,7 @@ body {
   display: grid;
   gap: 6px;
   width: 206px;
-  max-height: calc(100% - 24px);
+  max-height: calc(100% - 24px - var(--dock-h, 0px));
   padding: 4px;
   overflow: auto;
   border: 1px solid transparent;
@@ -497,7 +525,7 @@ body {
   flex-direction: column;
   gap: 8px;
   width: 300px;
-  max-height: calc(100% - 24px);
+  max-height: calc(100% - 24px - var(--dock-h, 0px));
   overflow: auto;
   pointer-events: none;
   cursor: auto;
@@ -1307,16 +1335,16 @@ body {
 @container (max-width: 760px) {
   .orbit-key {
     top: 46px;
-    max-height: calc(100% - 58px);
+    max-height: calc(100% - 58px - var(--dock-h, 0px));
   }
   .orbit-side {
     top: auto;
     right: 8px;
-    bottom: 8px;
+    bottom: calc(8px + var(--dock-h, 0px));
     left: 8px;
     width: auto;
-    /* Half the scene stays visible above it. */
-    max-height: 50%;
+    /* Half the scene above the dock stays visible. */
+    max-height: calc((100% - var(--dock-h, 0px)) / 2);
   }
   /* Search last, nearest the thumb; a spacer keeps the stack at the bottom
      while it fits and lets it scroll normally when it does not. */
