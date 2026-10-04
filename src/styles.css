@@ -796,6 +796,243 @@ body {
 .orbit-pass-play:hover {
   background: rgba(159, 240, 200, 0.3);
 }
+/* Learn panel: orbit families and the six-element demo. */
+.orbit-learn {
+  flex: 0 0 auto;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(12, 13, 22, 0.86);
+  backdrop-filter: blur(10px);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.orbit-learn header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.orbit-learn-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.orbit-learn-tabs button {
+  flex: 1 1 0;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-3);
+}
+.orbit-learn-tabs button[aria-pressed='true'] {
+  background: rgba(var(--glow-rgb), 0.22);
+  color: var(--text-1);
+}
+.orbit-learn-close {
+  display: grid;
+  flex: 0 0 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-3);
+}
+.orbit-learn-close:hover {
+  background: rgba(var(--glow-rgb), 0.12);
+  color: var(--text-1);
+}
+.orbit-learn-intro {
+  margin: 0 0 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.orbit-types {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.orbit-types li > button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+  text-align: left;
+}
+.orbit-types li > button:hover {
+  background: rgba(var(--glow-rgb), 0.1);
+}
+.orbit-types li[data-active] > button {
+  border-color: rgba(255, 210, 138, 0.45);
+  background: rgba(255, 210, 138, 0.08);
+}
+.orbit-types strong {
+  color: var(--text-1);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.orbit-types small {
+  grid-column: 1;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.orbit-types span {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  color: #ffd28a;
+  font: 500 11.5px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.orbit-type-about {
+  padding: 6px 9px 4px;
+  line-height: 1.6;
+}
+.orbit-type-about p {
+  margin: 0;
+}
+.orbit-type-none {
+  margin-top: 6px !important;
+  color: #ffd28a;
+}
+.orbit-demo-canvas {
+  display: block;
+  width: 100%;
+  height: 240px;
+  cursor: grab;
+  touch-action: none;
+}
+.orbit-demo-canvas:active {
+  cursor: grabbing;
+}
+.orbit-demo-hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 10.5px;
+  text-align: center;
+}
+.orbit-demo-explain {
+  min-height: 62px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(159, 240, 200, 0.06);
+  line-height: 1.55;
+}
+.orbit-demo-explain strong {
+  color: var(--signal);
+  font-weight: 500;
+}
+.orbit-demo-explain p {
+  margin: 2px 0 0;
+}
+.orbit-demo-sliders {
+  display: grid;
+  gap: 4px;
+}
+.orbit-demo-sliders label {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 6px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 7px;
+}
+.orbit-demo-sliders label[data-active] {
+  background: rgba(159, 240, 200, 0.06);
+}
+.orbit-demo-symbol {
+  grid-row: 1 / span 2;
+  color: var(--signal);
+  font: 500 13px/1 var(--font-serif, serif);
+  font-style: italic;
+  text-align: center;
+}
+.orbit-demo-name {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.orbit-demo-sliders output {
+  grid-row: 1;
+  grid-column: 3;
+  color: var(--text-1);
+  font: 500 11px/1 var(--font-mono);
+  text-align: right;
+}
+.orbit-demo-sliders input {
+  grid-row: 2;
+  grid-column: 2 / span 2;
+  width: 100%;
+  accent-color: #9ff0c8;
+}
+.orbit-demo-derived {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 8px;
+  color: var(--text-3);
+  font: 500 10.5px/1.4 var(--font-mono);
+}
+.orbit-demo-derived button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(159, 240, 200, 0.16);
+  color: var(--signal);
+}
+.orbit-demo-warning {
+  margin: 6px 0 0;
+  color: #ffb38a;
+  font-size: 11px;
+}
+.orbit-demo-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.orbit-demo-presets button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+}
+.orbit-demo-presets button:hover {
+  color: var(--text-1);
+}
+.orbit-demo-show {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
 .orbit-icon-button {
   flex: 0 0 30px;
 }
@@ -1078,7 +1315,8 @@ body {
     bottom: 8px;
     left: 8px;
     width: auto;
-    max-height: 62%;
+    /* Half the scene stays visible above it. */
+    max-height: 50%;
   }
   /* Search last, nearest the thumb; a spacer keeps the stack at the bottom
      while it fits and lets it scroll normally when it does not. */

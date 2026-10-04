@@ -31,6 +31,7 @@ import {
   vectorAt,
   type SpacecraftSnapshot,
 } from '@/lib/ephemeris';
+import { orbitPoint, trueAnomaly, type Elements } from '@/lib/kepler';
 import {
   basis,
   earthCover,
@@ -97,6 +98,11 @@ export type SceneView = {
   hovered?: { index: number; label: string } | null;
   /** CSS px on the right covered by panels; the lunar close-up moves left. */
   insetRight?: number;
+  /** Teaching mode: how strongly the satellites in the focus mask (see
+   * `setFocus`) stand out from the rest, 0–1. */
+  focus?: number;
+  /** An orbit drawn from classical elements (the learn panel). */
+  example?: { elements: Elements; label: string; color: string } | null;
 };
 export type Selection = {
   index: number;
@@ -299,6 +305,7 @@ export function createOrbitScene(
       uClock: { value: 0 },
       uHalo: { value: 0 },
       uHaloAlpha: { value: 0 },
+      uFocus: { value: 0 },
     },
   });
   const trails = new Program(gl, {
@@ -405,6 +412,7 @@ export function createOrbitScene(
         group: { size: 1, data: group },
         recent: { size: 1, data: Float32Array.from(next.recent) },
         shade: { size: 1, data: shade },
+        focus: { size: 1, data: new Float32Array(next.count) },
       }),
     });
     trailSatellites.length = 0;
@@ -594,8 +602,11 @@ export function createOrbitScene(
     points.uniforms.uDistance.value = cam.distance;
     points.uniforms.uRecent.value = view.recent;
     points.uniforms.uClock.value = clock % 1e6;
+    const focus = view.focus ?? 0;
+    points.uniforms.uFocus.value = focus;
     trails.uniforms.uAlpha.value = CONSTELLATIONS.map(
       (_, index) =>
+        (1 - 0.85 * focus) *
         view.groups[index] *
         (TRAIL_SPAN[index] === 0
           ? 0
@@ -812,6 +823,48 @@ export function createOrbitScene(
           context.stroke();
           label(selected.label, x + 14, y - 12, behind ? 0.5 : 1);
         }
+      }
+    }
+    // An example orbit from the learn panel: the ellipse (broken where Earth
+    // hides it), its perigee, and the satellite at its mean anomaly.
+    const example = view.example;
+    if (example) {
+      const { elements, color } = example;
+      context.strokeStyle = rgba(color, 0.9);
+      context.lineWidth = 1.6;
+      context.setLineDash([6, 4]);
+      context.beginPath();
+      let drawing = false;
+      for (let step = 0; step <= 240; step++) {
+        const p = orbitPoint(elements, (step / 240) * Math.PI * 2);
+        const point = hidden(p) ? null : screen(p);
+        if (!point || !Number.isFinite(point[0] + point[1])) {
+          drawing = false;
+          continue;
+        }
+        if (drawing) context.lineTo(point[0], point[1]);
+        else context.moveTo(point[0], point[1]);
+        drawing = true;
+      }
+      context.stroke();
+      context.setLineDash([]);
+      const perigee = orbitPoint(elements, 0);
+      const [px, py] = screen(perigee);
+      if (elements.e > 0.02 && !hidden(perigee) && Number.isFinite(px + py)) {
+        context.fillStyle = rgba(color, 0.9);
+        context.beginPath();
+        context.arc(px, py, 2.5, 0, Math.PI * 2);
+        context.fill();
+      }
+      const body = orbitPoint(elements, trueAnomaly(elements.M, elements.e));
+      const [bx, by] = screen(body);
+      if (Number.isFinite(bx + by)) {
+        const behind = hidden(body);
+        context.fillStyle = rgba(color, behind ? 0.35 : 1);
+        context.beginPath();
+        context.arc(bx, by, 4, 0, Math.PI * 2);
+        context.fill();
+        label(example.label, bx + 9, by - 8, behind ? 0.5 : 1);
       }
     }
     const hovered = view.hovered;
@@ -1418,6 +1471,17 @@ export function createOrbitScene(
     render,
     /** The camera of the last frame, for picking. */
     camera: () => camera,
+    /** Teaching mode's satellites (1 = stand out), or null for none. */
+    setFocus(mask: Uint8Array | null) {
+      const attribute = pointMesh?.geometry.attributes.focus;
+      if (!attribute) return;
+      const data = attribute.data as Float32Array;
+      if (mask)
+        for (let index = 0; index < data.length; index++)
+          data[index] = mask[index];
+      else data.fill(0);
+      attribute.needsUpdate = true;
+    },
     /** The visible satellite nearest to (x, y) CSS px within `radius`, or
      * -1. Screen-space search over the last frame's positions: about a
      * millisecond for fifteen thousand satellites, with no GPU read-back. */
