@@ -122,6 +122,24 @@ body {
 .app-bar > * {
   pointer-events: auto;
 }
+/* A click on empty sky hides every control (see OrbitView). */
+.orbit-map > .orbit-dock,
+.orbit-map::after,
+.orbit-key,
+.orbit-fresh,
+.orbit-side {
+  transition:
+    opacity 0.25s ease,
+    visibility 0.25s;
+}
+.orbit-map[data-chrome='hidden'] > .orbit-dock,
+.orbit-map[data-chrome='hidden']::after,
+.orbit-map[data-chrome='hidden'] .orbit-key,
+.orbit-map[data-chrome='hidden'] .orbit-fresh,
+.orbit-map[data-chrome='hidden'] .orbit-side {
+  visibility: hidden;
+  opacity: 0;
+}
 /* A soft shade under the dock keeps its text readable over a bright Earth. */
 .orbit-map::after {
   content: '';
@@ -276,6 +294,7 @@ body {
   scrollbar-width: thin;
   transition:
     opacity 0.7s var(--ease-out),
+    visibility 0.25s,
     background-color 0.3s,
     border-color 0.3s;
 }
@@ -1218,9 +1237,22 @@ body {
 }
 .orbit-clock {
   flex: 0 0 auto;
+  /* An input that looks like plain text: sized to "YYYY-MM-DD HH:MM:SS UTC". */
+  width: calc(23 * (1ch + 0.06em) + 1px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: none;
   color: var(--text-2);
+  font: inherit;
+  letter-spacing: inherit;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.orbit-clock[aria-invalid] {
+  color: #ff6b6b;
 }
 
 .orbit-legend {

@@ -211,6 +211,28 @@ const clamp = (time: number, anchor: number) =>
   Math.min(anchor + SPAN, Math.max(anchor - SPAN, time));
 const utc = (time: number) =>
   new Date(time).toISOString().slice(0, 19).replace('T', ' ');
+/** A typed UTC time ("2026-10-04 12:00[:00][ UTC]"), or null if it is not a
+ * real date and time. */
+function parseUtc(value: string) {
+  const match =
+    /^\s*(\d{4})-(\d{1,2})-(\d{1,2})[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:UTC|Z)?\s*$/i.exec(
+      value,
+    );
+  if (!match) return null;
+  const [year, month, day, hour, minute, second = 0] = match
+    .slice(1)
+    .map((part) => (part === undefined ? undefined : Number(part)));
+  const time = Date.UTC(year!, month! - 1, day, hour, minute, second);
+  const date = new Date(time);
+  // Date.UTC rolls 31 April over to 1 May: only exact round trips count.
+  return date.getUTCMonth() === month! - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    minute! < 60 &&
+    second < 60
+    ? time
+    : null;
+}
 // The clock the camera tweens run on (the frame loop's own time base).
 const frameClock = () => performance.now();
 const reducedMotion = () =>
@@ -227,7 +249,6 @@ const sceneText = (lang: Language): SceneText & { now: string } =>
         l2: 'Sun–Earth L2',
         spill: (count) =>
           `GNSS main-lobe spillover · ${count} reach the Moon now`,
-        lugre: 'LuGRE tracked GPS and Galileo on the Moon in 2025',
         closeUp: 'Lunar close-up · LRO · Danuri',
         now: 'NOW',
         phase: (percent, waxing) =>
@@ -241,7 +262,6 @@ const sceneText = (lang: Language): SceneText & { now: string } =>
         l1: '日地 L1',
         l2: '日地 L2',
         spill: (count) => `GNSS 主瓣外溢 · 此刻 ${count} 颗可达月球`,
-        lugre: '2025 年 LuGRE 在月面收到 GPS / Galileo 信号',
         closeUp: '月球近景 · LRO · Danuri',
         now: '此刻',
         phase: (percent, waxing) => `${waxing ? '盈' : '亏'} ${percent}%`,
@@ -325,7 +345,7 @@ export function OrbitView({
   const stage = useRef<HTMLDivElement>(null);
   const scrub = useRef<HTMLInputElement>(null);
   const tape = useRef<HTMLCanvasElement>(null);
-  const readout = useRef<HTMLOutputElement>(null);
+  const readout = useRef<HTMLInputElement>(null);
   const [anchor] = useState(() => Date.now());
   // A shared link (lib/share.ts) sets the opening state instead of the intro.
   const [shared] = useState(() =>
@@ -425,7 +445,17 @@ export function OrbitView({
   // The pointer over the scene (CSS px in the stage), and what it is over.
   const hover = useRef<{ x: number; y: number } | null>(null);
   const hovered = useRef<{ index: number; label: string } | null>(null);
-  const press = useRef<{ x: number; y: number; at: number } | null>(null);
+  const press = useRef<{
+    x: number;
+    y: number;
+    at: number;
+    editing: boolean;
+  } | null>(null);
+  // A click on empty sky hides every control; another brings them back.
+  const [chromeHidden, setChromeHidden] = useState(false);
+  // Typing a time into the clock: whether to play on afterwards.
+  const editing = useRef<{ resume: boolean } | null>(null);
+  const [timeInvalid, setTimeInvalid] = useState(false);
   const side = useRef<HTMLDivElement>(null);
   const dock = useRef<HTMLDivElement>(null);
   const insetRight = useRef(0);
@@ -719,6 +749,30 @@ export function OrbitView({
     });
   const togglePlay = () => setClock({ playing: !clock.current.playing });
   const step = (ms: number) => setClock({ sim: simTime() + ms, live: false });
+  // Editing the clock pauses it; a valid time within the tape is applied on
+  // Enter or blur, anything else is dropped.
+  const typedTime = (value: string) => {
+    const time = parseUtc(value);
+    return time !== null && time === clamp(time, anchor) ? time : null;
+  };
+  const startEdit = () => {
+    if (editing.current) return;
+    editing.current = { resume: clock.current.playing };
+    setClock({ playing: false, live: false });
+  };
+  const endEdit = (apply: boolean) => {
+    const field = readout.current;
+    const state = editing.current;
+    if (!field || !state) return;
+    editing.current = null;
+    const time = apply ? typedTime(field.value) : null;
+    setTimeInvalid(false);
+    setClock({
+      ...(time === null ? {} : { sim: time }),
+      playing: state.resume,
+    });
+    field.value = `${utc(simTime())} UTC`;
+  };
 
   // --- Camera ---------------------------------------------------------------
   /** The pose on screen now, frozen: user input takes over from any tween. */
@@ -800,6 +854,8 @@ export function OrbitView({
       x: event.clientX,
       y: event.clientY,
       at: performance.now(),
+      // This press only ends the time edit (by blurring the field).
+      editing: document.activeElement === readout.current,
     };
     pointers.current.set(event.pointerId, {
       x: event.clientX,
@@ -869,8 +925,9 @@ export function OrbitView({
           event.clientY - box.top,
           event.pointerType === 'mouse' ? 14 : 26,
         ) ?? -1;
-      if (index < 0) select(null);
-      else
+      if (index < 0) {
+        if (!down.editing) setChromeHidden((hidden) => !hidden);
+      } else
         void ensureCatalog().then(
           (loaded) => loaded && select(loaded.entries[index]),
         );
@@ -1151,7 +1208,8 @@ export function OrbitView({
         }
       }
 
-      if (readout.current) readout.current.textContent = `${utc(time)} UTC`;
+      if (readout.current && document.activeElement !== readout.current)
+        readout.current.value = `${utc(time)} UTC`;
       if (scrub.current && document.activeElement !== scrub.current)
         scrub.current.value = String(Math.round((time - anchor) / 1000));
       drawTape(rulerContext, {
@@ -1347,7 +1405,11 @@ export function OrbitView({
   ];
 
   return (
-    <div className="orbit-map" data-focus={focus}>
+    <div
+      className="orbit-map"
+      data-focus={focus}
+      data-chrome={chromeHidden ? 'hidden' : undefined}
+    >
       <div
         className="orbit-map-stage"
         ref={stage}
@@ -1498,7 +1560,31 @@ export function OrbitView({
               }
             />
           </div>
-          <output ref={readout} className="orbit-clock" />
+          <input
+            ref={readout}
+            className="orbit-clock"
+            type="text"
+            inputMode="numeric"
+            spellCheck={false}
+            autoComplete="off"
+            aria-label={t('Time (UTC)', '时间（UTC）')}
+            aria-invalid={timeInvalid || undefined}
+            onFocus={startEdit}
+            onChange={(event) => {
+              startEdit();
+              setTimeInvalid(typedTime(event.currentTarget.value) === null);
+            }}
+            onBlur={() => endEdit(true)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                if (typedTime(event.currentTarget.value) === null) return;
+                event.currentTarget.blur();
+              } else if (event.key === 'Escape') {
+                endEdit(false);
+                event.currentTarget.blur();
+              }
+            }}
+          />
           <button
             type="button"
             className="orbit-icon-button"

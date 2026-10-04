@@ -129,7 +129,6 @@ export type SceneText = {
   l1: string;
   l2: string;
   spill: (count: number) => string;
-  lugre: string;
   closeUp: string;
   phase: (percent: number, waxing: boolean) => string;
 };
@@ -1075,10 +1074,14 @@ export function createOrbitScene(
     // With the close-up open in the top-right, label the Moon on its left.
     const moonAlign: CanvasTextAlign =
       moonAt[0] > width * (lensWeight > 0.01 ? 0.3 : 0.62) ? 'right' : 'left';
+    const moonLabel = {
+      x: moonAt[0] + (moonAlign === 'right' ? -1 : 1) * (moonRadius + 8),
+      y: moonAt[1] - moonRadius * 0.4 - 4,
+    };
     label(
       moonText,
-      moonAt[0] + (moonAlign === 'right' ? -1 : 1) * (moonRadius + 8),
-      moonAt[1] - moonRadius * 0.4 - 4,
+      moonLabel.x,
+      moonLabel.y,
       (0.55 + 0.45 * (1 - ease)) * (1 - view.deep),
       moonAlign,
     );
@@ -1469,21 +1472,15 @@ export function createOrbitScene(
         'center',
       );
     }
-    // Cislunar captions, right-aligned above the scale bar, where the Moon
-    // and its label never go in this view.
-    if (spillCount >= 0) {
-      const weight = view.spill;
-      const bottom = height - 40;
+    // The spillover count, on the line under the Moon's label.
+    if (spillCount >= 0)
       label(
         text.spill(spillCount),
-        width - 14,
-        narrow ? bottom : bottom - 14,
-        weight,
-        'right',
+        moonLabel.x,
+        moonLabel.y + 14,
+        view.spill,
+        moonAlign,
       );
-      if (!narrow)
-        label(text.lugre, width - 14, bottom, 0.55 * weight, 'right');
-    }
 
     // Scale bar on a 1–2–5 ladder, true at Earth's distance.
     const kmPerPx = EARTH_RADIUS_KM / scale;
