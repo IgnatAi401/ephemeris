@@ -1,0 +1,143 @@
+# Refreshes the ephemerides and deploys orbit.ignat.ai to GitHub Pages.
+#
+# - schedule: CelesTrak twice a day, at an off-peak minute (UTC); the Monday
+#   morning run also refreshes JPL Horizons, so the spacecraft data is weekly.
+# - workflow_dispatch: the same by hand, with options to refresh Horizons and
+#   to accept a group count that really did drop by more than 20%.
+# - push to main: deploys the code with the live site's current data.
+#
+# The fetched data is never committed: it is built into the Pages artifact.
+# Whatever is not refreshed, or fails, is copied from the live site
+# (scripts/prepare-data.mjs), so the site always keeps working data. Only the
+# small status/status.json is committed back after a scheduled or manual run,
+# as the baseline for the next run's checks and to keep the repository active
+# (GitHub pauses scheduled workflows after 60 days without activity). Pushes
+# made with GITHUB_TOKEN do not trigger workflows, so this does not loop.
+name: Update ephemerides and deploy
+
+on:
+  schedule:
+    - cron: '17 3,15 * * *'
+  workflow_dispatch:
+    inputs:
+      refresh_horizons:
+        description: Refresh the JPL Horizons spacecraft data now
+        type: boolean
+        default: false
+      accept_drop:
+        description: Accept a group that shrank by more than 20% (checked by hand)
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One deployment at a time; a queued run waits instead of cancelling one in
+# progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      degraded: ${{ steps.data.outputs.degraded }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      # The previous run's CelesTrak downloads: with them, a group is never
+      # downloaded twice within two hours, even across manual runs.
+      - uses: actions/cache@v6
+        with:
+          path: .cache/celestrak
+          key: celestrak-${{ github.run_id }}
+          restore-keys: celestrak-
+      - name: Choose the data sources
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REFRESH_HORIZONS: ${{ inputs.refresh_horizons }}
+        run: |
+          constellations=live
+          spacecraft=live
+          if [ "$EVENT" != push ]; then constellations=fetch; fi
+          if [ "$EVENT" = workflow_dispatch ] && [ "$REFRESH_HORIZONS" = true ]; then spacecraft=fetch; fi
+          # Weekly: the first scheduled run on Monday (03:17 UTC).
+          if [ "$EVENT" = schedule ] && [ "$(date -u +%u)" = 1 ] && [ "$(date -u +%H)" -lt 12 ]; then spacecraft=fetch; fi
+          echo "constellations=$constellations" >> "$GITHUB_OUTPUT"
+          echo "spacecraft=$spacecraft" >> "$GITHUB_OUTPUT"
+      - name: Prepare and check the data
+        id: data
+        env:
+          CONSTELLATIONS: ${{ steps.plan.outputs.constellations }}
+          SPACECRAFT: ${{ steps.plan.outputs.spacecraft }}
+          ACCEPT_DROP: ${{ inputs.accept_drop && '--accept-drop' || '' }}
+        run: node scripts/prepare-data.mjs --constellations="$CONSTELLATIONS" --spacecraft="$SPACECRAFT" $ACCEPT_DROP
+      - run: pnpm build
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: status
+          path: public/data/status.json
+          retention-days: 3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+  commit-status:
+    needs: deploy
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: status
+          path: status
+      - name: Commit status/status.json
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add status/status.json
+          if git diff --cached --quiet; then exit 0; fi
+          total=$(node -p "require('./status/status.json').constellations.total")
+          git commit -m "Update data status: $total satellites"
+          # main may have moved while this run was building.
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+  # Fresh data that failed the checks was replaced by the previous snapshot
+  # and deployed; fail the run afterwards so the failure is noticed.
+  report:
+    needs: [build, deploy]
+    if: needs.build.outputs.degraded == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::Fresh data failed scripts/check-orbits.mjs; the site kept its previous snapshot. See the build job log."
+          exit 1

@@ -1,0 +1,137 @@
+{
+  "generated": "2026-10-04T07:43:58.954Z",
+  "constellations": {
+    "source": "CelesTrak GP element sets (OMM), https://celestrak.org",
+    "fetched": "2026-10-04T07:38:34.127Z",
+    "total": 15168,
+    "groups": {
+      "starlink": {
+        "count": 11121,
+        "celestrak": 11122,
+        "duplicates": 0,
+        "dropped": 1,
+        "recent": 54
+      },
+      "iridium": {
+        "count": 80,
+        "celestrak": 80,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "orbcomm": {
+        "count": 14,
+        "celestrak": 14,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "gps": {
+        "count": 32,
+        "celestrak": 32,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "glonass": {
+        "count": 29,
+        "celestrak": 29,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 1
+      },
+      "galileo": {
+        "count": 32,
+        "celestrak": 32,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "beidou": {
+        "count": 54,
+        "celestrak": 54,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "stations": {
+        "count": 23,
+        "celestrak": 23,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 2
+      },
+      "qianfan": {
+        "count": 256,
+        "celestrak": 256,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 18
+      },
+      "guowang": {
+        "count": 217,
+        "celestrak": 217,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 18
+      },
+      "geo": {
+        "count": 546,
+        "celestrak": 567,
+        "duplicates": 21,
+        "dropped": 0,
+        "recent": 0
+      },
+      "debrisFy1c": {
+        "count": 1984,
+        "celestrak": 1984,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "debrisCosmos2251": {
+        "count": 586,
+        "celestrak": 586,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "debrisIridium33": {
+        "count": 110,
+        "celestrak": 110,
+        "duplicates": 0,
+        "dropped": 0,
+        "recent": 0
+      },
+      "recent": {
+        "count": 84,
+        "celestrak": 177,
+        "duplicates": 93,
+        "dropped": 0,
+        "recent": 84
+      }
+    }
+  },
+  "spacecraft": {
+    "source": "JPL Horizons, https://ssd.jpl.nasa.gov/horizons/",
+    "fetched": "2026-10-04T07:43:07.983Z",
+    "start": "2026-09-13T06:00:00.000Z",
+    "stop": "2026-11-03T06:00:00.000Z",
+    "stops": {
+      "soho": "2026-11-02T18:00:00.000Z"
+    },
+    "tracks": [
+      "soho",
+      "jwst",
+      "euclid",
+      "lro",
+      "danuri"
+    ],
+    "leapSeconds": "IERS Bulletin C 72 (2026-07-06)"
+  },
+  "files": {
+    "orbits.json": 1034149,
+    "catalog.json": 942422,
+    "spacecraft.json": 114291
+  }
+}

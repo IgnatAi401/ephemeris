@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.cache/
+.DS_Store
+*.tsbuildinfo
+.env
+.env.*
+# Fetched ephemerides: built into each deploy, never committed. Only the small
+# status/status.json is committed back by the workflow.
+public/data/

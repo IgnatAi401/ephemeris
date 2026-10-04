@@ -1,0 +1,48 @@
+{
+  "name": "ephemeris",
+  "version": "0.1.0",
+  "private": true,
+  "description": "orbit.ignat.ai: a full-screen view of satellites, the Moon and Sun\u2013Earth L1/L2 spacecraft.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.21.0 <25",
+    "pnpm": ">=12.3.4 <13"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "data:fetch": "node scripts/fetch-orbits.mjs",
+    "check:data": "node scripts/check-orbits.mjs",
+    "data:prepare": "node scripts/prepare-data.mjs"
+  },
+  "dependencies": {
+    "d3-geo": "3.1.1",
+    "lucide-react": "1.31.0",
+    "ogl": "1.0.11",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "topojson-client": "3.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.2.1",
+    "@types/d3-geo": "3.1.0",
+    "@types/geojson": "7946.0.16",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@types/topojson-client": "3.1.5",
+    "@types/topojson-specification": "1.0.5",
+    "@vitejs/plugin-react": "6.0.2",
+    "oxfmt": "0.61.0",
+    "oxlint": "1.76.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "tailwindcss": "4.2.1",
+    "typescript": "5.9.3",
+    "vite": "8.0.13"
+  }
+}

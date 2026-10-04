@@ -1,0 +1,564 @@
+@import 'tailwindcss';
+
+/* Tokens copied from the personal site so the two read as one family. */
+:root {
+  color-scheme: dark;
+  --background: #07080f;
+  --foreground: #efeff4;
+  --glow-rgb: 151, 130, 232;
+  --glow-highlight-rgb: 200, 189, 255;
+  --text-1: var(--foreground);
+  --text-2: #b6b3c6;
+  --text-3: #9899aa;
+  --line: rgba(255, 255, 255, 0.075);
+  --surface: rgba(18, 19, 28, 0.8);
+  --surface-edge: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-sans: 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono:
+    'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;
+  --signal: #9ff0c8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- App shell: the scene fills the screen above a slim dock ---------- */
+.app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(
+      ellipse 60% 70% at 50% 45%,
+      rgba(var(--glow-rgb), 0.1),
+      transparent 70%
+    ),
+    var(--background);
+}
+.app-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.app-bar h1 {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--text-1);
+  font: 600 12px/1 var(--font-mono);
+  letter-spacing: 0.24em;
+}
+.app-bar h1 span {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+.app-lang {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: 500 11px/1 var(--font-mono);
+  cursor: pointer;
+}
+.app-lang:hover {
+  color: var(--text-1);
+}
+.app-lang:focus-visible {
+  outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
+  outline-offset: 2px;
+}
+
+/* ---------- Orbit view (adapted from the personal site's academic page) ---------- */
+.orbit-map {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  container-type: inline-size;
+}
+.orbit-map-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.orbit-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 8px calc(16px + env(safe-area-inset-right))
+    calc(10px + env(safe-area-inset-bottom))
+    calc(16px + env(safe-area-inset-left));
+}
+.orbit-dock > .orbit-legend {
+  order: 1;
+}
+.orbit-dock > .orbit-timeline {
+  order: 2;
+}
+.orbit-dock > .app-bar {
+  order: 3;
+}
+.orbit-fresh {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top));
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 5px 11px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(10, 11, 20, 0.62);
+  color: var(--text-2);
+  font: 500 10.5px/1.4 var(--font-mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+.orbit-fresh i {
+  flex: 0 0 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 6px var(--signal);
+}
+.orbit-fresh[data-stale] {
+  border-color: rgba(255, 196, 120, 0.35);
+  color: #ffd9a8;
+  white-space: normal;
+}
+.orbit-fresh[data-stale] i {
+  background: #ffb35c;
+  box-shadow: 0 0 6px #ffb35c;
+}
+.orbit-poster {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+}
+.orbit-poster img {
+  max-width: min(100%, 960px);
+  max-height: 70%;
+  border-radius: 12px;
+  object-fit: contain;
+}
+.orbit-poster p {
+  max-width: 36em;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.orbit-credits {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 16px;
+  color: rgba(170, 166, 196, 0.55);
+  font: 500 10px/1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+}
+.orbit-credits a {
+  color: rgba(223, 218, 245, 0.72);
+  text-decoration: none;
+}
+.orbit-credits a:hover {
+  color: var(--text-1);
+  text-decoration: underline;
+}
+.orbit-credits small {
+  margin-left: 6px;
+  font-size: inherit;
+}
+.orbit-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 1.2s var(--ease-out);
+}
+.orbit-map-stage[data-status='ready'] .orbit-canvas {
+  opacity: 1;
+}
+.orbit-overlay {
+  pointer-events: none;
+}
+.orbit-key {
+  position: absolute;
+  top: 16px;
+  left: 18px;
+  display: grid;
+  gap: 10px;
+  pointer-events: none;
+  color: rgba(223, 218, 245, 0.78);
+  font: 500 10px/1.5 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: opacity 0.7s var(--ease-out);
+}
+.orbit-map[data-focus='moon'] .orbit-key,
+.orbit-map[data-focus='deep'] .orbit-key {
+  opacity: 0.35;
+}
+.orbit-key-title {
+  display: block;
+  margin-bottom: 2px;
+  color: rgba(170, 166, 196, 0.6);
+}
+.orbit-key ul {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.orbit-key li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.orbit-key li i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot);
+  box-shadow: 0 0 6px var(--dot);
+}
+.orbit-key li span {
+  margin-left: auto;
+  padding-left: 12px;
+  color: rgba(170, 166, 196, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+.orbit-key-source {
+  margin: 0;
+  color: rgba(170, 166, 196, 0.45);
+  font-size: 9px;
+}
+.orbit-fallback {
+  position: absolute;
+  inset: auto 0 44% 0;
+  margin: 0;
+  color: var(--text-3);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Time controls: play, jump to now, speed, and a ±14 day scrubber. */
+.orbit-timeline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 14px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-edge);
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+}
+.orbit-timeline button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color 0.3s,
+    color 0.3s;
+}
+.orbit-timeline button:hover {
+  background: rgba(var(--glow-rgb), 0.12);
+  color: var(--text-1);
+}
+.orbit-timeline button:focus-visible {
+  outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
+  outline-offset: 1px;
+}
+.orbit-play {
+  flex: 0 0 30px;
+  background: rgba(var(--glow-rgb), 0.16) !important;
+  color: #fff !important;
+}
+.orbit-now {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+.orbit-now i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(170, 166, 196, 0.5);
+  transition:
+    background-color 0.3s,
+    box-shadow 0.3s;
+}
+.orbit-now[data-live] {
+  color: var(--signal);
+}
+.orbit-now[data-live] i {
+  background: var(--signal);
+  box-shadow: 0 0 8px var(--signal);
+  animation: orbit-live 1.8s ease-in-out infinite;
+}
+/* Paused on "now": lit but still. */
+.orbit-now[data-live][data-paused] i {
+  animation: none;
+}
+@keyframes orbit-live {
+  50% {
+    opacity: 0.35;
+  }
+}
+.orbit-tape {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 120px;
+  height: 42px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  /* Ticks fade out toward both ends of the visible window. */
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 14%,
+    #000 86%,
+    transparent
+  );
+}
+.orbit-tape canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: pan-y;
+}
+.orbit-tape canvas:active {
+  cursor: grabbing;
+}
+.orbit-tape:has(.orbit-scrub:focus-visible) {
+  outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
+  outline-offset: 2px;
+  mask-image: none;
+}
+/* Visually hidden; keeps arrow keys and screen readers on the clock. */
+.orbit-scrub {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  opacity: 0;
+}
+.orbit-clock {
+  flex: 0 0 auto;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.orbit-legend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.orbit-legend button {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-edge);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.5s var(--ease-out),
+    background-color 0.5s var(--ease-out);
+}
+.orbit-legend li[data-focused] button {
+  border-color: rgba(var(--glow-highlight-rgb), 0.42);
+  background-color: rgba(33, 29, 54, 0.88);
+}
+.orbit-legend button:focus-visible {
+  outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
+  outline-offset: 2px;
+}
+.orbit-legend-icon {
+  display: grid;
+  flex: 0 0 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(var(--glow-rgb), 0.1);
+  color: #cfc6f5;
+  transition:
+    background-color 0.5s,
+    color 0.5s,
+    box-shadow 0.5s;
+}
+.orbit-legend li[data-focused] .orbit-legend-icon {
+  background: rgba(var(--glow-rgb), 0.28);
+  color: #fff;
+  box-shadow: 0 0 18px rgba(var(--glow-rgb), 0.45);
+}
+.orbit-legend-short {
+  display: none;
+}
+.orbit-legend strong {
+  display: block;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.orbit-legend small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-3);
+  font: 500 10.5px/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+}
+/* Full screen: the dock's spacing comes from its own gap. */
+.orbit-dock .orbit-timeline,
+.orbit-dock .orbit-legend {
+  margin: 0;
+}
+@container (max-width: 640px) {
+  /* Phones keep all three topics in one slim row, icon and title only, so
+     the scene keeps most of the screen. */
+  .orbit-legend {
+    gap: 6px;
+  }
+  .orbit-legend button {
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 7px 6px;
+  }
+  .orbit-legend-icon {
+    flex: 0 0 26px;
+    height: 26px;
+    border-radius: 8px;
+  }
+  .orbit-legend-icon svg {
+    width: 15px;
+    height: 15px;
+  }
+  .orbit-legend strong {
+    font-size: 12px;
+  }
+  .orbit-legend small,
+  .orbit-legend-long {
+    display: none;
+  }
+  .orbit-legend-short {
+    display: inline;
+  }
+  .app-bar h1 span,
+  .orbit-credits small,
+  .orbit-credits-via {
+    display: none;
+  }
+  .app-bar {
+    gap: 10px;
+  }
+  .orbit-timeline {
+    flex-wrap: wrap;
+  }
+  .orbit-tape {
+    order: 5;
+    flex-basis: 100%;
+  }
+  .orbit-clock {
+    margin-left: auto;
+  }
+}
+@container (max-width: 460px) {
+  .orbit-key li span,
+  .orbit-key-source {
+    display: none;
+  }
+  .orbit-key {
+    top: 46px;
+    left: 12px;
+    font-size: 9px;
+  }
+}
+/* Short screens (landscape phones, small windows): every row of the dock
+   gives up some height to the scene. */
+@media (max-height: 640px) {
+  .orbit-dock {
+    gap: 6px;
+    padding-top: 6px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  }
+  .orbit-legend button {
+    padding: 6px 8px;
+  }
+  .orbit-legend-icon,
+  .orbit-legend small {
+    display: none;
+  }
+  .orbit-timeline {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+  .orbit-tape {
+    height: 34px;
+  }
+  .orbit-credits {
+    font-size: 9px;
+  }
+}
