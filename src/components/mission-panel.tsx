@@ -127,20 +127,39 @@ export function MissionPanel({
         </header>
         <p className="orbit-learn-intro">
           {t(
-            'Real trajectories reconstructed by JPL. Pick one to fly it again; drag the time tape to scrub through the whole mission.',
-            '轨迹来自 JPL 的实测重建数据。选一个任务重新飞一遍，拖动下方时间轴可以浏览全程。',
+            'Real trajectories reconstructed by JPL, and classics rebuilt from published figures. Pick one to fly it again; drag the time tape to scrub through the whole mission.',
+            '轨迹来自 JPL 根据实测数据重建的星历；没有这类数据的经典任务按公开资料重建。选一个任务重新飞一遍，拖动下方时间轴可以浏览全程。',
           )}
         </p>
         {[
-          { helio: false, en: 'Earth and Moon', zh: '地月空间' },
-          { helio: true, en: 'Across the solar system', zh: '行星际' },
+          {
+            en: 'Earth and Moon',
+            zh: '地月空间',
+            has: (item: Mission) => !item.reconstructed && !item.kind,
+          },
+          {
+            en: 'Across the solar system',
+            zh: '行星际',
+            has: (item: Mission) =>
+              !item.reconstructed && item.kind === 'helio',
+          },
+          {
+            en: 'Rebuilt from published figures',
+            zh: '根据公开资料重建',
+            note: {
+              en: 'No public tracking data: rebuilt from published times and orbits, faithful in outline, not in every kilometre.',
+              zh: '没有公开的实测轨迹，按公布的时间和轨道参数重建：轮廓可信，细节为示意。',
+            },
+            has: (item: Mission) => Boolean(item.reconstructed),
+          },
         ].map((group) => (
           <div key={group.en}>
             <h3 className="orbit-mission-group">{t(group.en, group.zh)}</h3>
+            {group.note && (
+              <p className="orbit-mission-group-note">{pick(group.note)}</p>
+            )}
             <ul className="orbit-mission-list">
-              {MISSIONS.filter(
-                (item) => (item.kind === 'helio') === group.helio,
-              ).map((item) => (
+              {MISSIONS.filter(group.has).map((item) => (
                 <li key={item.id}>
                   <button
                     type="button"
@@ -206,6 +225,17 @@ export function MissionPanel({
         <h2>
           <i aria-hidden="true" />
           {pick(mission)}
+          {mission.reconstructed && (
+            <span
+              className="orbit-mission-badge"
+              title={t(
+                'Rebuilt from published figures, not tracking data',
+                '根据公开资料重建，不是实测轨迹',
+              )}
+            >
+              {t('Reconstruction', '重建示意')}
+            </span>
+          )}
         </h2>
         <button
           type="button"
@@ -319,8 +349,14 @@ export function MissionPanel({
       </ol>
       <p className="orbit-mission-source">
         {mission.note && <>{pick(mission.note)} </>}
-        {t('Trajectory', '轨迹')}: JPL Horizons ·{' '}
-        {new Date(launch).toISOString().slice(0, 10)} {t('launch', '发射')} ·{' '}
+        {t('Trajectory', '轨迹')}:{' '}
+        {mission.reconstructed
+          ? t(
+              'rebuilt from published figures, not tracking data',
+              '根据公开资料重建，非实测',
+            )
+          : 'JPL Horizons'}{' '}
+        · {new Date(launch).toISOString().slice(0, 10)} {t('launch', '发射')} ·{' '}
         {mission.agency}
       </p>
     </section>

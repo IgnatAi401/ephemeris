@@ -1,6 +1,25 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { cachedText } from './lib/net.mjs';
-import { SOURCE, precession, rotate } from './lib/horizons.mjs';
+import { SOURCE } from './lib/horizons.mjs';
+import {
+  DAY,
+  HOUR,
+  MINUTE,
+  MOON_STEP,
+  consistent,
+  distance,
+  interpolator,
+  mend,
+  merge,
+  moonAt,
+  nearRanges,
+  ofDate,
+  packed,
+  round,
+  stamp,
+  stateAt,
+  thin,
+  vectors,
+} from './lib/mission-data.mjs';
 
 // Historical mission trajectories for the mission replay, written to
 // public/missions/<id>.json. Unlike public/data these never change, so they
@@ -22,16 +41,9 @@ import { SOURCE, precession, rotate } from './lib/horizons.mjs';
 // 30 minutes near a planet or the Sun, every 2 minutes in a close flyby. The
 // planets they meet come from Horizons as well, thinned finely around each
 // encounter and coarsely elsewhere, so a flyby passes the planet where it was.
-const MINUTE = 60000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-// Horizons answers a few tens of thousands of rows comfortably.
-const MAX_ROWS = 20000;
 // Within these distances (km) the spacecraft is sampled every minute.
 const NEAR_EARTH = 60000;
 const NEAR_MOON = 15000;
-// Every three hours keeps the interpolated Moon within a kilometre.
-const MOON_STEP = 3 * HOUR;
 
 /** Times are UTC; each window starts and ends inside Horizons' coverage
  * (checked 2026-10-04). `coarse` is the step away from Earth and the Moon. */
@@ -145,209 +157,6 @@ const HELIO = [
 ].map((mission) => ({ ...mission, kind: 'helio' }));
 
 const OUT = new URL('../public/missions/', import.meta.url);
-const stamp = (time) =>
-  new Date(time).toISOString().slice(0, 19).replace('T', ' ');
-const round = (value, digits) => Number(value.toFixed(digits));
-
-/** Vectors (km, km/s, ICRF) of `command` relative to `center` (Earth by
- * default) from `start` to `stop` every `step` ms, as rows [time, x, y, z,
- * vx, vy, vz]. Cached for good: Horizons' reconstructed trajectories of past
- * missions do not change. */
-async function vectors(command, start, stop, step, center = '399') {
-  const rows = [];
-  const span = step * (MAX_ROWS - 1);
-  for (let from = start; from < stop; from += span) {
-    const to = Math.min(stop, from + span);
-    const query = new URLSearchParams({
-      format: 'json',
-      COMMAND: `'${command}'`,
-      OBJ_DATA: 'NO',
-      MAKE_EPHEM: 'YES',
-      EPHEM_TYPE: 'VECTORS',
-      CENTER: `'500@${center}'`,
-      REF_PLANE: 'FRAME',
-      VEC_TABLE: '2',
-      CSV_FORMAT: 'YES',
-      OUT_UNITS: 'KM-S',
-      TIME_TYPE: 'UT',
-      START_TIME: `'${stamp(from)}'`,
-      STOP_TIME: `'${stamp(to)}'`,
-      STEP_SIZE: `'${step / MINUTE} min'`,
-    });
-    const url = `https://ssd.jpl.nasa.gov/api/horizons.api?${query}`;
-    const label = `Horizons ${command} ${stamp(from)}`;
-    const body = (text) =>
-      JSON.parse(text).result.split('$$SOE')[1]?.split('$$EOE')[0];
-    const { text, cached } = await cachedText(
-      'horizons-missions',
-      center === '399'
-        ? `${command}-${from}-${to}-${step}`
-        : `${command}@${center}-${from}-${to}-${step}`,
-      url,
-      {
-        label,
-        timeout: 180,
-        maxAge: Number.POSITIVE_INFINITY,
-        validate: (value) => {
-          if (!body(value))
-            throw new Error(
-              `${label}: ${JSON.parse(value).result.slice(0, 400)}`,
-            );
-        },
-      },
-    );
-    if (!cached) console.log(`  fetched ${label} (${step / MINUTE} min)`);
-    const chunk = body(text)
-      .trim()
-      .split('\n')
-      .map((line) => line.split(',').map((cell) => cell.trim()));
-    const expected = Math.floor((to - from) / step) + 1;
-    if (chunk.length !== expected)
-      throw new Error(`${label}: ${chunk.length} rows, expected ${expected}`);
-    for (const row of chunk) {
-      const time = Math.round((Number(row[0]) - 2440587.5) * DAY);
-      if (rows.length && time <= rows[rows.length - 1][0]) continue;
-      rows.push([time, ...row.slice(2, 8).map(Number)]);
-    }
-  }
-  return rows;
-}
-
-/** Cubic Hermite position between rows a and b at `time`. */
-function hermite(a, b, time, out) {
-  const h = (b[0] - a[0]) / 1000;
-  const t = (time - a[0]) / (b[0] - a[0]);
-  const h00 = 2 * t ** 3 - 3 * t ** 2 + 1;
-  const h10 = t ** 3 - 2 * t ** 2 + t;
-  const h01 = -2 * t ** 3 + 3 * t ** 2;
-  const h11 = t ** 3 - t ** 2;
-  for (let axis = 0; axis < 3; axis++)
-    out[axis] =
-      h00 * a[1 + axis] +
-      h10 * a[4 + axis] * h +
-      h01 * b[1 + axis] +
-      h11 * b[4 + axis] * h;
-  return out;
-}
-
-/** Indices of the rows to keep: each span between kept rows reproduces every
- * dropped row within `tolerance(row)` km. Greedy, with a doubling search for
- * the longest span. */
-function thin(rows, tolerance) {
-  const at = [0, 0, 0];
-  const fits = (i, j) => {
-    for (let k = i + 1; k < j; k++) {
-      hermite(rows[i], rows[j], rows[k][0], at);
-      const error = Math.hypot(
-        at[0] - rows[k][1],
-        at[1] - rows[k][2],
-        at[2] - rows[k][3],
-      );
-      if (error > tolerance(rows[k])) return false;
-    }
-    return true;
-  };
-  const keep = [0];
-  let i = 0;
-  while (i < rows.length - 1) {
-    let good = i + 1;
-    let probe = 2;
-    while (i + probe < rows.length && fits(i, i + probe)) {
-      good = i + probe;
-      probe *= 2;
-    }
-    // Longest span lies between `good` and the first failing probe.
-    let bad = Math.min(rows.length, i + probe);
-    while (bad - good > 1) {
-      const middle = (good + bad) >> 1;
-      if (fits(i, middle)) good = middle;
-      else bad = middle;
-    }
-    keep.push(good);
-    i = good;
-  }
-  return keep;
-}
-
-/** Hermite position of the Moon's hourly rows at `time`. */
-function moonAt(moon, start, time, out) {
-  const index = Math.min(
-    moon.length - 2,
-    Math.max(0, Math.floor((time - start) / MOON_STEP)),
-  );
-  return hermite(moon[index], moon[index + 1], time, out);
-}
-
-/** Merged time ranges [from, to] where `near` holds for coarse rows, padded
- * by a coarse step either side and snapped to whole minutes. */
-function nearRanges(rows, near, step, start, stop) {
-  const ranges = [];
-  for (const row of rows) {
-    if (!near(row)) continue;
-    const from = Math.max(start, row[0] - step);
-    const to = Math.min(stop, row[0] + step);
-    const last = ranges[ranges.length - 1];
-    if (last && from <= last[1]) last[1] = to;
-    else ranges.push([from, to]);
-  }
-  return ranges.map(([from, to]) => [
-    Math.ceil(from / MINUTE) * MINUTE,
-    Math.floor(to / MINUTE) * MINUTE,
-  ]);
-}
-
-/** Drop rows whose velocity disagrees with the positions either side (by
- * more than 100 m/s against the central difference; a burn bends the path far less within a minute). Horizons' files carry
- * the odd badly fitted stretch around small burns, where the velocity swings
- * by a kilometre a second from one minute to the next; interpolating through
- * them would throw the path tens of kilometres off. */
-function consistent(rows, label) {
-  const dropped = [];
-  const kept = rows.filter((row, index) => {
-    if (index === 0 || index === rows.length - 1) return true;
-    const [a, b] = [rows[index - 1], rows[index + 1]];
-    const span = (b[0] - a[0]) / 1000;
-    // Only minute-scale rows: over a day a curving path alone parts the
-    // difference from the velocity.
-    if (span > (2 * HOUR) / 1000) return true;
-    const error = Math.hypot(
-      ...[0, 1, 2].map(
-        (axis) => row[4 + axis] - (b[1 + axis] - a[1 + axis]) / span,
-      ),
-    );
-    // Braking in an atmosphere changes the velocity fast but steadily: the
-    // row then still lies between its neighbours' on every axis. A bad
-    // stretch swings back and forth.
-    const jump = Math.hypot(
-      ...[0, 1, 2].map((axis) => {
-        const value = row[4 + axis];
-        const [low, high] = [a[4 + axis], b[4 + axis]].sort((x, y) => x - y);
-        return Math.max(0, value - high, low - value);
-      }),
-    );
-    if (error <= 0.1 || jump <= 0.1) return true;
-    dropped.push(row[0]);
-    return false;
-  });
-  if (dropped.length)
-    console.warn(
-      `  ${label}: dropped ${dropped.length} inconsistent rows near ${[
-        ...new Set(dropped.map((time) => stamp(time).slice(0, 13))),
-      ].join(', ')} h`,
-    );
-  return kept;
-}
-
-/** Rotate a row from ICRF to the mean equator and equinox of its date. */
-function ofDate(row) {
-  const matrix = precession(row[0]);
-  return [
-    row[0],
-    ...rotate(matrix, row.slice(1, 4)),
-    ...rotate(matrix, row.slice(4, 7)),
-  ];
-}
-
 async function fetchMission(mission) {
   const start = Date.parse(mission.start);
   const stop = Date.parse(mission.stop);
@@ -376,7 +185,10 @@ async function fetchMission(mission) {
       if (b > a) rows = rows.concat(await vectors(command, a, b, MINUTE));
     rows.sort((x, y) => x[0] - y[0]);
     rows = rows.filter((row, index) => !index || row[0] > rows[index - 1][0]);
-    rows = consistent(rows, `${mission.id} ${key}`);
+    rows = mend(
+      consistent(rows, `${mission.id} ${key}`),
+      `${mission.id} ${key}`,
+    );
     // Half a kilometre near Earth, a little more far out.
     const kept = thin(
       rows,
@@ -418,72 +230,6 @@ async function fetchMission(mission) {
     },
   };
 }
-
-/** Index-aligned rows → Hermite position at `time`, for rows sorted by time;
- * `hint` remembers the last interval. */
-function interpolator(rows) {
-  let hint = 0;
-  const out = [0, 0, 0];
-  return (time) => {
-    if (!(rows[hint][0] <= time && time <= rows[hint + 1]?.[0])) {
-      let lo = 0;
-      let hi = rows.length - 1;
-      while (hi - lo > 1) {
-        const middle = (lo + hi) >> 1;
-        if (rows[middle][0] <= time) lo = middle;
-        else hi = middle;
-      }
-      hint = lo;
-    }
-    return hermite(rows[hint], rows[hint + 1], time, out);
-  };
-}
-/** As `interpolator`, but the full state: position and velocity. */
-function stateAt(rows) {
-  const position = interpolator(rows);
-  return (time) => {
-    let lo = 0;
-    let hi = rows.length - 1;
-    while (hi - lo > 1) {
-      const middle = (lo + hi) >> 1;
-      if (rows[middle][0] <= time) lo = middle;
-      else hi = middle;
-    }
-    const [a, b] = [rows[lo], rows[hi]];
-    const h = (b[0] - a[0]) / 1000;
-    const u = (time - a[0]) / (b[0] - a[0]);
-    const velocity = [0, 1, 2].map(
-      (axis) =>
-        ((6 * u * u - 6 * u) * a[1 + axis] +
-          (3 * u * u - 4 * u + 1) * a[4 + axis] * h +
-          (-6 * u * u + 6 * u) * b[1 + axis] +
-          (3 * u * u - 2 * u) * b[4 + axis] * h) /
-        h,
-    );
-    return [...position(time), ...velocity];
-  };
-}
-const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-/** Merge time ranges [from, to] that touch. */
-const merge = (ranges) =>
-  ranges
-    .sort((a, b) => a[0] - b[0])
-    .reduce((list, range) => {
-      const last = list[list.length - 1];
-      if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
-      else list.push([...range]);
-      return list;
-    }, []);
-// Around the Sun velocities to 0.1 m/s: still well inside the tolerance of
-// any span, and a quarter shorter.
-const packed = (rows, start, digits, speedDigits = 6) => ({
-  // Seconds from the mission start, then state vectors in km and km/s.
-  t: rows.map((row) => (row[0] - start) / 1000),
-  s: rows.flatMap((row) => [
-    ...row.slice(1, 4).map((value) => round(value, digits)),
-    ...row.slice(4, 7).map((value) => round(value, speedDigits)),
-  ]),
-});
 
 async function fetchHelio(mission) {
   const start = Date.parse(mission.start);
