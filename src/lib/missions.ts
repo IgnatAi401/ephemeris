@@ -5,7 +5,9 @@ import type { BodyKey } from '@/lib/planets';
 // reconstruction (scripts/fetch-missions.mjs → public/missions/<id>.json);
 // the events and phases here are from the agencies' own timelines, checked
 // against the data itself (closest approaches, record distances and burns
-// show up in the vectors to the minute).
+// show up in the vectors to the minute). Missions marked `reconstructed`
+// have no such data: their paths are rebuilt from published figures by
+// scripts/reconstruct-missions.mjs, and the panel says so.
 
 /** How the path is drawn. `earth`: geocentric, fixed stars (the true
  * motion). `moon`: centred on the Moon, so lunar orbits close on themselves.
@@ -67,9 +69,19 @@ export type Mission = {
     | 'newhorizons'
     | 'cassini'
     | 'parker'
-    | 'mars2020';
+    | 'mars2020'
+    | 'sputnik1'
+    | 'vostok1'
+    | 'apollo8'
+    | 'apollo11'
+    | 'apollo13'
+    | 'change4'
+    | 'change5'
+    | 'tianwen1';
   /** Around the Sun rather than around Earth. */
   kind?: 'helio';
+  /** Rebuilt from published figures, not tracking data. */
+  reconstructed?: boolean;
   en: string;
   zh: string;
   /** Short line for the mission list. */
@@ -711,6 +723,956 @@ export const MISSIONS: Mission[] = [
         about: {
           en: 'The first spacecraft ever in this orbit',
           zh: '人类首个进入这种轨道的航天器',
+        },
+      },
+    ],
+  },
+  {
+    id: 'sputnik1',
+    reconstructed: true,
+    en: 'Sputnik 1',
+    zh: '斯普特尼克 1 号',
+    tagline: {
+      en: '1957 · the first artificial satellite',
+      zh: '1957 · 第一颗人造卫星',
+    },
+    summary: {
+      en: 'A polished 58 cm sphere with four antennas, launched by the Soviet Union on an R-7 rocket from Baikonur. Its radio beeps, picked up by amateurs around the world, opened the space age. It circled Earth every 96 minutes for three months and burned up in January 1958.',
+      zh: '一个直径 58 cm、带四根天线的抛光金属球，由苏联用 R-7 火箭从拜科努尔发射。它的“嘀嘀”无线电信号被世界各地的业余爱好者收到，开启了太空时代。它每 96 分钟绕地球一圈，三个月后于 1958 年 1 月再入大气层烧毁。',
+    },
+    launch: '1957-10-04T19:28:34Z',
+    agency: 'USSR',
+    color: '#dfe5ef',
+    craft: [{ en: 'Sputnik 1', zh: '斯普特尼克 1 号', color: '#dfe5ef' }],
+    frames: ['earth'],
+    note: {
+      en: 'Reconstructed from the published orbit (215 × 939 km, 65.1°); the first day of three months.',
+      zh: '根据公布的轨道（215 × 939 km，倾角 65.1°）重建，只画三个月中的第一天。',
+    },
+    phases: [
+      {
+        from: '1957-10-04T19:28:34Z',
+        en: 'Launch',
+        zh: '发射',
+        about: {
+          en: 'The R-7, built as an intercontinental missile, lifts off from Baikonur in Kazakhstan and heads north-east.',
+          zh: '原本作为洲际导弹研制的 R-7 火箭从哈萨克斯坦的拜科努尔起飞，向东北方向爬升。',
+        },
+        shot: { aim: 'craft', zoom: 3 },
+        speed: 60,
+      },
+      {
+        from: '1957-10-04T19:34Z',
+        en: 'In orbit',
+        zh: '在轨运行',
+        about: {
+          en: 'About five minutes after liftoff the satellite separates at about 8 km/s. The 26 m core stage reached orbit too: the bright moving “star” people saw at dusk was the rocket stage, not the small sphere.',
+          zh: '起飞约 5 分钟后，卫星以约 8 km/s 的速度与火箭分离。26 m 长的芯级也进了轨道：人们在黄昏看到的那颗移动的“亮星”其实是火箭芯级，而不是这个小球。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 600,
+      },
+    ],
+    events: [
+      { at: '1957-10-04T19:28:34Z', en: 'Liftoff', zh: '起飞' },
+      {
+        at: '1957-10-04T19:33:49Z',
+        en: 'Separation',
+        zh: '星箭分离',
+        about: { en: '315 s after liftoff', zh: '起飞后 315 秒' },
+      },
+      {
+        at: '1957-10-04T21:10Z',
+        en: 'First orbit complete',
+        zh: '绕地球一圈',
+        about: { en: '96.2 minutes per orbit', zh: '周期 96.2 分钟' },
+      },
+    ],
+  },
+  {
+    id: 'vostok1',
+    reconstructed: true,
+    en: 'Vostok 1',
+    zh: '东方 1 号',
+    tagline: {
+      en: '1961 · Yuri Gagarin, the first human in space',
+      zh: '1961 · 加加林，人类首次进入太空',
+    },
+    summary: {
+      en: 'On 12 April 1961 Yuri Gagarin flew once around Earth in 108 minutes: up from Baikonur, over Siberia, the Pacific and Africa, and down near Saratov, where he ejected from the capsule at about 7 km and came down by parachute.',
+      zh: '1961 年 4 月 12 日，加加林绕地球飞行一圈，历时 108 分钟：从拜科努尔起飞，飞越西伯利亚、太平洋和非洲上空，最后在萨拉托夫附近返回；他在约 7 km 高度弹射出舱，跳伞落地。',
+    },
+    launch: '1961-04-12T06:07:00Z',
+    agency: 'USSR',
+    color: '#ff9580',
+    craft: [{ en: 'Vostok', zh: '东方号', color: '#ff9580' }],
+    frames: ['earth'],
+    note: {
+      en: 'Reconstructed from the published orbit (181 × 327 km, 64.95°) and times; the re-entry and descent are a sketch.',
+      zh: '根据公布的轨道（181 × 327 km，倾角 64.95°）和时间重建，再入和降落段为示意。',
+    },
+    phases: [
+      {
+        from: '1961-04-12T06:07:00Z',
+        en: 'Launch',
+        zh: '发射',
+        about: {
+          en: '“Poyekhali!” — “Let’s go!” A three-stage R-7 puts the 4.7-tonne Vostok into orbit about ten minutes later.',
+          zh: '“Poyekhali！”（“我们出发了！”）三级 R-7 火箭约 10 分钟后把 4.7 吨重的东方号送入轨道。',
+        },
+        shot: { aim: 'craft', zoom: 3 },
+        speed: 60,
+      },
+      {
+        from: '1961-04-12T06:18Z',
+        en: 'One orbit',
+        zh: '绕地球一圈',
+        about: {
+          en: 'The flight is automatic. Nobody knew how a person would cope with weightlessness, so the manual controls were locked; the code was in a sealed envelope on board.',
+          zh: '整个飞行由自动系统控制。当时没人知道人在失重下会怎样，手动控制被锁住，解锁密码封在舱内的信封里。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 60,
+      },
+      {
+        from: '1961-04-12T07:22Z',
+        en: 'Re-entry',
+        zh: '返回',
+        about: {
+          en: 'Over Africa the retro-rocket fires for about 40 seconds. The equipment module fails to separate cleanly and the capsule tumbles until the cables between them burn through in the atmosphere.',
+          zh: '在非洲上空，制动发动机点火约 40 秒。仪器舱没能干净分离，返回舱一路翻滚，直到两者之间的电缆在大气中烧断。',
+        },
+        shot: { aim: 'craft', zoom: 3 },
+        speed: 60,
+      },
+    ],
+    events: [
+      { at: '1961-04-12T06:07:00Z', en: 'Liftoff', zh: '起飞' },
+      { at: '1961-04-12T06:17:00Z', en: 'In orbit', zh: '入轨' },
+      { at: '1961-04-12T07:25:00Z', en: 'Retrofire', zh: '制动点火' },
+      {
+        at: '1961-04-12T07:55:00Z',
+        en: 'Landing',
+        zh: '着陆',
+        about: {
+          en: 'Near Smelovka, Saratov region',
+          zh: '萨拉托夫州斯梅洛夫卡村附近',
+        },
+      },
+    ],
+  },
+  {
+    id: 'apollo8',
+    reconstructed: true,
+    en: 'Apollo 8',
+    zh: '阿波罗 8 号',
+    tagline: {
+      en: '1968 · the first humans around the Moon',
+      zh: '1968 · 人类首次环绕月球',
+    },
+    summary: {
+      en: 'Frank Borman, Jim Lovell and Bill Anders rode the first crewed Saturn V out of Earth orbit, circled the Moon ten times over Christmas Eve 1968 and photographed “Earthrise”.',
+      zh: '博尔曼、洛弗尔和安德斯乘第一枚载人土星五号火箭飞离地球轨道，1968 年平安夜前后绕月飞行 10 圈，拍下了著名的《地出》照片。',
+    },
+    launch: '1968-12-21T12:51:00Z',
+    agency: 'NASA',
+    color: '#a9c9ff',
+    craft: [
+      { en: 'Command/service module', zh: '指令/服务舱', color: '#a9c9ff' },
+    ],
+    frames: ['earth', 'moon', 'earthMoon'],
+    note: {
+      en: 'Reconstructed by numerical integration from published burn times and orbits (Apollo by the Numbers); not tracking data.',
+      zh: '根据公布的点火时间和轨道（《Apollo by the Numbers》）数值积分重建，不是实测轨迹。',
+    },
+    phases: [
+      {
+        from: '1968-12-21T12:51:00Z',
+        en: 'Earth orbit',
+        zh: '地球停泊轨道',
+        about: {
+          en: 'Almost three hours in a 185 km parking orbit while the crew and Mission Control check the spacecraft.',
+          zh: '先在约 185 km 高的停泊轨道上飞近三个小时，宇航员和地面检查飞船状态。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 600,
+      },
+      {
+        from: '1968-12-21T15:35Z',
+        en: 'Translunar injection',
+        zh: '地月转移点火',
+        about: {
+          en: 'The third stage fires again for over five minutes: for the first time, people leave Earth’s orbit.',
+          zh: '第三级再次点火五分多钟——人类第一次飞离地球轨道。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 60,
+      },
+      {
+        from: '1968-12-21T16:00Z',
+        en: 'To the Moon',
+        zh: '奔月',
+        about: {
+          en: 'Nearly three days of coasting, with television pictures of a shrinking Earth sent home on the way.',
+          zh: '近三天的滑行，途中向地面传回越来越小的地球的电视画面。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+      },
+      {
+        from: '1968-12-24T09:30Z',
+        en: 'Ten orbits of the Moon',
+        zh: '绕月十圈',
+        about: {
+          en: 'Behind the Moon, out of radio contact, the engine brakes them into lunar orbit. On the fourth orbit Anders photographs Earth rising over the lunar horizon; Lovell calls Earth “a grand oasis in the big vastness of space”, and that evening the crew reads from Genesis on live television.',
+          zh: '在月球背面、与地面失联时，发动机点火减速进入环月轨道。第四圈时安德斯拍下地球从月平线升起的照片；洛弗尔说地球是“广阔太空中的一片绿洲”，当晚宇航员在电视直播中朗读《创世记》。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 3600,
+        frame: 'moon',
+      },
+      {
+        from: '1968-12-25T06:00Z',
+        en: 'Home',
+        zh: '返回地球',
+        about: {
+          en: 'The burn home happens behind the Moon on Christmas morning. “Please be informed, there is a Santa Claus,” Lovell radios when they reappear.',
+          zh: '圣诞节清晨，返回点火同样在月球背面进行。飞船重新出现时，洛弗尔报告：“请注意，圣诞老人是存在的。”',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+      },
+      {
+        from: '1968-12-27T15:25Z',
+        en: 'Re-entry',
+        zh: '再入大气层',
+        about: {
+          en: 'The command module hits the atmosphere at about 11 km/s and splashes down in the Pacific before dawn.',
+          zh: '指令舱以约 11 km/s 的速度再入大气层，黎明前溅落在太平洋。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 60,
+      },
+    ],
+    events: [
+      {
+        at: '1968-12-21T15:41:38Z',
+        en: 'Translunar injection',
+        zh: '地月转移点火',
+        about: { en: '5 min 18 s burn', zh: '点火 5 分 18 秒' },
+      },
+      {
+        at: '1968-12-24T09:59:20Z',
+        en: 'Lunar orbit insertion',
+        zh: '近月制动',
+        about: { en: '4 min 7 s burn', zh: '点火 4 分 7 秒' },
+      },
+      { at: '1968-12-24T16:40Z', en: 'Earthrise', zh: '《地出》' },
+      {
+        at: '1968-12-25T06:10:16Z',
+        en: 'Trans-Earth injection',
+        zh: '月地转移点火',
+      },
+      {
+        at: '1968-12-27T15:51:42Z',
+        en: 'Splashdown',
+        zh: '溅落',
+        about: { en: 'Pacific Ocean', zh: '太平洋' },
+      },
+    ],
+  },
+  {
+    id: 'apollo11',
+    reconstructed: true,
+    en: 'Apollo 11',
+    zh: '阿波罗 11 号',
+    tagline: {
+      en: '1969 · the first landing on the Moon',
+      zh: '1969 · 人类首次登月',
+    },
+    summary: {
+      en: 'Neil Armstrong and Buzz Aldrin landed Eagle in the Sea of Tranquility on 20 July 1969 and stayed about 21½ hours, while Michael Collins circled overhead in Columbia. They lifted off, docked, and the three splashed down in the Pacific four days later.',
+      zh: '1969 年 7 月 20 日，阿姆斯特朗和奥尔德林驾驶“鹰”号登月舱降落在静海，在月面停留约 21.5 小时；柯林斯在“哥伦比亚”号指令舱里绕月等待。两人起飞与指令舱对接后，三人一同返回，溅落在太平洋。',
+    },
+    launch: '1969-07-16T13:32:00Z',
+    agency: 'NASA',
+    color: '#9fd0ff',
+    craft: [
+      {
+        en: 'Columbia (CSM)',
+        zh: '哥伦比亚号（指令/服务舱）',
+        color: '#9fd0ff',
+      },
+      { en: 'Eagle (lunar module)', zh: '鹰号（登月舱）', color: '#ffd27f' },
+    ],
+    frames: ['earth', 'moon', 'earthMoon'],
+    note: {
+      en: 'Reconstructed by numerical integration from published burn times and orbits (Apollo by the Numbers); the landing, ascent and re-entry are sketches.',
+      zh: '根据公布的点火时间和轨道（《Apollo by the Numbers》）数值积分重建；下降、上升和再入为示意。',
+    },
+    phases: [
+      {
+        from: '1969-07-16T13:32:00Z',
+        en: 'Launch and Earth orbit',
+        zh: '发射与停泊轨道',
+        about: {
+          en: 'The Saturn V puts the stack into a 185 km parking orbit in twelve minutes; one and a half orbits of checks follow.',
+          zh: '土星五号用 12 分钟把飞船送入约 185 km 的停泊轨道，随后绕地球一圈半做检查。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 600,
+      },
+      {
+        from: '1969-07-16T16:10Z',
+        en: 'Translunar injection',
+        zh: '地月转移点火',
+        about: {
+          en: 'The third stage fires for almost six minutes over the Pacific; Columbia then turns round to pull Eagle out of its housing.',
+          zh: '第三级在太平洋上空点火近 6 分钟；随后哥伦比亚号掉头，把鹰号从火箭整流罩里“拔”出来。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 60,
+      },
+      {
+        from: '1969-07-16T16:40Z',
+        en: 'To the Moon',
+        zh: '奔月',
+        about: {
+          en: 'Three days of coasting. Only one of four planned corrections was needed.',
+          zh: '约三天的滑行，原定四次中途修正只用了一次。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+      },
+      {
+        from: '1969-07-19T17:00Z',
+        en: 'Lunar orbit',
+        zh: '环月轨道',
+        about: {
+          en: 'Braking behind the Moon, then a second burn makes the orbit nearly circular, 100 to 120 km up.',
+          zh: '在月球背面减速入轨，第二次点火把轨道修成接近圆形，高度 100–120 km。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 3600,
+        frame: 'moon',
+      },
+      {
+        from: '1969-07-20T19:00Z',
+        en: 'The landing',
+        zh: '降落',
+        about: {
+          en: 'Eagle drops to 15 km and starts its powered descent. Computer alarms, then a boulder field: Armstrong flies on by hand and lands with little fuel to spare. “The Eagle has landed.”',
+          zh: '鹰号降到 15 km 高度后开始动力下降。先是计算机报警，接着发现着陆点满是巨石，阿姆斯特朗改为手动驾驶，着陆时燃料已所剩无几。“鹰已着陆。”',
+        },
+        shot: { aim: 'body', zoom: 0.8 },
+        speed: 60,
+        frame: 'moon',
+      },
+      {
+        from: '1969-07-20T20:30Z',
+        en: 'On the Moon',
+        zh: '月面活动',
+        about: {
+          en: '“One small step for [a] man, one giant leap for mankind.” Two and a half hours outside: a flag, experiments, 21.5 kg of rock and soil.',
+          zh: '“这是个人的一小步，却是人类的一大步。”两人在舱外活动约两个半小时：插国旗、布置实验、采集 21.5 kg 岩石和土壤。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 3600,
+        frame: 'moon',
+      },
+      {
+        from: '1969-07-21T17:45Z',
+        en: 'Ascent and docking',
+        zh: '起飞与对接',
+        about: {
+          en: 'The ascent stage lifts off, leaving the descent stage behind as a launch pad, and catches up with Columbia in under four hours.',
+          zh: '上升级以下降级为发射台起飞，不到四小时就追上哥伦比亚号并对接。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 600,
+        frame: 'moon',
+      },
+      {
+        from: '1969-07-22T04:30Z',
+        en: 'Home',
+        zh: '返回地球',
+        about: {
+          en: 'Behind the Moon, Columbia’s engine fires for two and a half minutes; two and a half days later they reach Earth.',
+          zh: '哥伦比亚号在月球背面点火两分半钟，两天半后回到地球。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+      },
+      {
+        from: '1969-07-24T16:20Z',
+        en: 'Splashdown',
+        zh: '溅落',
+        about: {
+          en: 'Re-entry at 11 km/s; the crew is picked up by USS Hornet and spends three weeks in quarantine.',
+          zh: '以 11 km/s 的速度再入大气层，宇航员被大黄蜂号航母接回，随后隔离三周。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 60,
+      },
+    ],
+    events: [
+      {
+        at: '1969-07-16T16:16:16Z',
+        en: 'Translunar injection',
+        zh: '地月转移点火',
+        about: { en: '5 min 47 s burn', zh: '点火 5 分 47 秒' },
+      },
+      {
+        at: '1969-07-19T17:21:50Z',
+        en: 'Lunar orbit insertion',
+        zh: '近月制动',
+        about: { en: '5 min 58 s burn', zh: '点火 5 分 58 秒' },
+      },
+      { at: '1969-07-20T17:44Z', en: 'Eagle undocks', zh: '鹰号分离' },
+      {
+        at: '1969-07-20T20:05:05Z',
+        en: 'Powered descent',
+        zh: '动力下降',
+      },
+      {
+        at: '1969-07-20T20:17:40Z',
+        en: 'Landing',
+        zh: '着陆',
+        about: { en: 'Sea of Tranquility', zh: '静海' },
+      },
+      { at: '1969-07-21T02:56Z', en: 'First step', zh: '迈出第一步' },
+      { at: '1969-07-21T17:54Z', en: 'Liftoff', zh: '月面起飞' },
+      { at: '1969-07-21T21:35Z', en: 'Docking', zh: '对接' },
+      {
+        at: '1969-07-22T04:55:42Z',
+        en: 'Trans-Earth injection',
+        zh: '月地转移点火',
+      },
+      {
+        at: '1969-07-24T16:50:35Z',
+        en: 'Splashdown',
+        zh: '溅落',
+        about: { en: 'Pacific Ocean', zh: '太平洋' },
+      },
+    ],
+  },
+  {
+    id: 'apollo13',
+    reconstructed: true,
+    en: 'Apollo 13',
+    zh: '阿波罗 13 号',
+    tagline: {
+      en: '1970 · “Houston, we’ve had a problem”',
+      zh: '1970 · “休斯敦，我们遇到了问题”',
+    },
+    summary: {
+      en: 'Fifty-six hours out, an oxygen tank exploded in the service module. Jim Lovell, Jack Swigert and Fred Haise used the lunar module Aquarius as a lifeboat: its engine put them back on a free return around the Moon and then sped up the trip home.',
+      zh: '飞行 56 小时后，服务舱的一个氧气罐爆炸。洛弗尔、斯威格特和海斯把“水瓶座”号登月舱当作救生艇：先用它的发动机让飞船回到绕月自由返回轨道，绕过月球后再点火加速回家。',
+    },
+    launch: '1970-04-11T19:13:00Z',
+    agency: 'NASA',
+    color: '#c7b8ff',
+    craft: [
+      {
+        en: 'Odyssey + Aquarius',
+        zh: '奥德赛号 + 水瓶座号',
+        color: '#c7b8ff',
+      },
+    ],
+    frames: ['earth', 'moon', 'earthMoon'],
+    note: {
+      en: 'Reconstructed by numerical integration from published burn times and the planned flyby (Apollo by the Numbers); not tracking data.',
+      zh: '根据公布的点火时间和飞越参数（《Apollo by the Numbers》）数值积分重建，不是实测轨迹。',
+    },
+    phases: [
+      {
+        from: '1970-04-11T19:13:00Z',
+        en: 'Launch',
+        zh: '发射',
+        about: {
+          en: 'A second-stage engine shuts down early; the others burn longer and the flight goes on as planned.',
+          zh: '第二级一台发动机提前关机，其余发动机多烧了一会儿补上，飞行照常进行。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 600,
+      },
+      {
+        from: '1970-04-11T22:00Z',
+        en: 'To the Moon',
+        zh: '奔月',
+        about: {
+          en: 'A day and a half out, a small burn takes them off the free-return path toward the planned landing at Fra Mauro.',
+          zh: '出发一天半后，一次小点火让飞船离开自由返回轨道，转向原定的弗拉·毛罗着陆区。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+      },
+      {
+        from: '1970-04-14T02:30Z',
+        en: '“We’ve had a problem”',
+        zh: '“我们遇到了问题”',
+        about: {
+          en: 'Oxygen tank 2 explodes; the service module loses its oxygen and power. Five hours later Aquarius’ descent engine puts them back on a free return.',
+          zh: '2 号氧气罐爆炸，服务舱的氧气和电力随之耗尽。五小时后，水瓶座号的下降发动机点火，让飞船回到自由返回轨道。',
+        },
+        shot: { aim: 'craft', zoom: 30 },
+        speed: 600,
+      },
+      {
+        from: '1970-04-14T22:00Z',
+        en: 'Around the Moon',
+        zh: '绕过月球',
+        about: {
+          en: 'They swing 254 km over the far side and reach 400,171 km from Earth, still the farthest humans have been (until Artemis II). Two hours later a second burn shortens the trip home.',
+          zh: '飞船从月球背面 254 km 高处掠过，到达距地球 400,171 km 处，创下人类到达最远距离的纪录（直到阿尔忒弥斯 2 号）。两小时后再次点火，缩短回家的时间。',
+        },
+        shot: { aim: 'body', zoom: 6 },
+        speed: 600,
+        frame: 'moon',
+      },
+      {
+        from: '1970-04-15T04:00Z',
+        en: 'The cold way home',
+        zh: '寒冷的归途',
+        about: {
+          en: 'Near freezing, short of water, with carbon dioxide rising until a fix made of tape, plastic bags and cardboard adapts the command module’s filters.',
+          zh: '舱内接近冰点，饮水短缺，二氧化碳浓度不断升高——直到宇航员用胶带、塑料袋和硬纸板把指令舱的滤罐改装后接到登月舱上。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+      },
+      {
+        from: '1970-04-17T17:40Z',
+        en: 'Splashdown',
+        zh: '溅落',
+        about: {
+          en: 'They leave Aquarius behind an hour before re-entry and splash down safely in the South Pacific.',
+          zh: '再入前约一小时抛掉水瓶座号，最终安全溅落在南太平洋。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 60,
+      },
+    ],
+    events: [
+      {
+        at: '1970-04-11T21:48:46Z',
+        en: 'Translunar injection',
+        zh: '地月转移点火',
+      },
+      {
+        at: '1970-04-13T01:53:49Z',
+        en: 'Leaving the free return',
+        zh: '离开自由返回轨道',
+      },
+      {
+        at: '1970-04-14T03:07:53Z',
+        en: 'Oxygen tank explodes',
+        zh: '氧气罐爆炸',
+      },
+      {
+        at: '1970-04-14T08:42:43Z',
+        en: 'Back to a free return',
+        zh: '回到自由返回轨道',
+        about: {
+          en: 'Lunar module engine, about 35 s',
+          zh: '登月舱发动机点火约 35 秒',
+        },
+      },
+      {
+        at: '1970-04-15T00:21Z',
+        en: 'Behind the Moon',
+        zh: '飞越月球背面',
+        about: { en: '254 km above the far side', zh: '距月面 254 km' },
+      },
+      {
+        at: '1970-04-15T02:40:39Z',
+        en: 'Speeding up',
+        zh: '加速返回',
+        about: { en: '4 min 24 s burn', zh: '点火 4 分 24 秒' },
+      },
+      {
+        at: '1970-04-17T18:07:41Z',
+        en: 'Splashdown',
+        zh: '溅落',
+        about: { en: 'South Pacific', zh: '南太平洋' },
+      },
+    ],
+  },
+  {
+    id: 'change4',
+    reconstructed: true,
+    en: 'Chang’e 4 + Queqiao',
+    zh: '嫦娥四号 + 鹊桥',
+    tagline: {
+      en: '2018–19 · the first soft landing on the far side',
+      zh: '2018–19 · 人类首次在月球背面软着陆',
+    },
+    summary: {
+      en: 'The far side never faces Earth, so a lander there cannot talk to us directly. China first sent the relay satellite Queqiao to a halo orbit around the Earth–Moon L2 point, about 65,000 km beyond the Moon; seven months later Chang’e 4 landed in Von Kármán crater and released the Yutu-2 rover.',
+      zh: '月球背面永远背对地球，着陆器无法直接与地面通信。中国先把“鹊桥”中继星送到月球后方约 6.5 万 km 的地月 L2 点晕轨道；七个月后，嫦娥四号降落在冯·卡门撞击坑，放出玉兔二号月球车。',
+    },
+    launch: '2018-05-20T21:28:00Z',
+    agency: 'CNSA',
+    color: '#ffcf7a',
+    craft: [
+      { en: 'Queqiao relay', zh: '鹊桥中继星', color: '#7fe0d0' },
+      { en: 'Chang’e 4 lander', zh: '嫦娥四号着陆器', color: '#ffcf7a' },
+    ],
+    frames: ['earth', 'moon', 'earthMoon'],
+    note: {
+      en: 'Reconstructed from published times and orbits by numerical integration; Queqiao’s transfer to L2, its halo orbit (a linear model) and the lander’s orbit adjustments are sketches.',
+      zh: '根据公布的时间和轨道参数数值积分重建；鹊桥飞往 L2 点的转移段、晕轨道（线性模型）以及着陆器的轨道调整为示意。',
+    },
+    phases: [
+      {
+        from: '2018-05-20T21:28:00Z',
+        en: 'Queqiao launches',
+        zh: '鹊桥发射',
+        about: {
+          en: 'A Long March 4C from Xichang sends the relay satellite toward the Moon. Its name, “magpie bridge”, comes from the folk tale of the cowherd and the weaver girl.',
+          zh: '长征四号丙火箭从西昌把中继星送往月球。“鹊桥”的名字来自牛郎织女的传说。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 600,
+      },
+      {
+        from: '2018-05-20T22:10Z',
+        en: 'To the Moon',
+        zh: '奔月',
+        about: {
+          en: 'Four and a half days to the Moon.',
+          zh: '约四天半飞到月球。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 21600,
+      },
+      {
+        from: '2018-05-25T08:00Z',
+        en: 'Past the Moon',
+        zh: '近月制动',
+        about: {
+          en: 'About 100 km above the Moon, a braking burn lets it swing past onto the slow path out to L2.',
+          zh: '在距月面约 100 km 处减速，借月球引力转向，慢慢飞往 L2 点。',
+        },
+        shot: { aim: 'body', zoom: 6 },
+        speed: 600,
+        frame: 'moon',
+      },
+      {
+        from: '2018-05-26T00:00Z',
+        en: 'Out to L2',
+        zh: '飞往 L2 点',
+        about: {
+          en: 'Beyond the Moon, Earth’s and the Moon’s pulls together hold a spacecraft in step with the Moon. Shown turning with the Moon, Queqiao drifts out there over three weeks.',
+          zh: '在月球后方，地球和月球的引力合起来能让航天器跟着月球同步绕地球转。在随月球旋转的参考系里，可以看到鹊桥用三周时间慢慢飘到那里。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 86400,
+        frame: 'earthMoon',
+      },
+      {
+        from: '2018-06-14T03:06Z',
+        en: 'Halo orbit',
+        zh: '晕轨道',
+        about: {
+          en: 'Queqiao loops around L2 every two weeks, never behind the Moon as seen from Earth, so it can see both Earth and the far side: the first relay satellite there.',
+          zh: '鹊桥每两周绕 L2 点一圈。从地球看去，它始终不会被月球挡住，因此能同时看到地球和月球背面——这是人类第一颗位于这里的中继卫星。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 86400,
+        frame: 'earthMoon',
+      },
+      {
+        from: '2018-12-07T18:00Z',
+        en: 'Chang’e 4 launches',
+        zh: '嫦娥四号发射',
+        about: {
+          en: 'Half a year later, a Long March 3B launches the lander from Xichang in the early hours of 8 December, Beijing time.',
+          zh: '半年后，长征三号乙火箭于北京时间 12 月 8 日凌晨从西昌发射着陆器。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 600,
+        frame: 'earth',
+      },
+      {
+        from: '2018-12-07T19:00Z',
+        en: 'To the Moon',
+        zh: '奔月',
+        about: {
+          en: 'About four and a half days, with one course correction.',
+          zh: '约四天半的旅程，途中做了一次轨道修正。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 21600,
+        frame: 'earth',
+      },
+      {
+        from: '2018-12-12T07:00Z',
+        en: 'Lunar orbit',
+        zh: '环月飞行',
+        about: {
+          en: 'Braking 100 km above the Moon, then three weeks in lunar orbit, waiting for sunrise over the landing site.',
+          zh: '在距月面约 100 km 处制动入轨，随后在环月轨道上飞行约三周，等待着陆区迎来日出。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 21600,
+        frame: 'moon',
+      },
+      {
+        from: '2019-01-03T01:50Z',
+        en: 'Landing on the far side',
+        zh: '降落月球背面',
+        about: {
+          en: 'From 15 km, an 11-minute powered descent; at the end it hovers, picks a flat spot, and touches down in Von Kármán crater inside the South Pole–Aitken basin.',
+          zh: '从 15 km 高度开始约 11 分钟的动力下降，最后悬停、避开障碍，降落在南极–艾特肯盆地内的冯·卡门撞击坑。',
+        },
+        shot: { aim: 'body', zoom: 0.8 },
+        speed: 60,
+        frame: 'moon',
+      },
+      {
+        from: '2019-01-03T02:40Z',
+        en: 'Yutu-2',
+        zh: '玉兔二号',
+        about: {
+          en: 'The rover rolls down a ramp that evening; it went on to drive across the far side for years.',
+          zh: '当晚，月球车沿滑梯驶上月面，此后在月球背面行驶了多年。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 3600,
+        frame: 'moon',
+      },
+    ],
+    events: [
+      { at: '2018-05-20T21:28:00Z', en: 'Queqiao launches', zh: '鹊桥发射' },
+      {
+        at: '2018-05-25T13:46Z',
+        en: 'Braking near the Moon',
+        zh: '鹊桥近月制动',
+        about: { en: 'About 100 km up', zh: '距月面约 100 km' },
+      },
+      {
+        at: '2018-06-14T03:06Z',
+        en: 'Halo orbit',
+        zh: '进入晕轨道',
+        about: {
+          en: 'About 65,000 km beyond the Moon',
+          zh: '月球后方约 6.5 万 km',
+        },
+      },
+      {
+        at: '2018-12-07T18:23:34Z',
+        en: 'Chang’e 4 launches',
+        zh: '嫦娥四号发射',
+      },
+      {
+        at: '2018-12-12T08:39Z',
+        en: 'Lunar orbit insertion',
+        zh: '近月制动',
+        about: { en: 'About 100 km up', zh: '近月点约 100 km' },
+      },
+      {
+        at: '2018-12-30T00:55Z',
+        en: 'Lowered orbit',
+        zh: '降轨',
+        about: { en: '15 × 100 km', zh: '15 × 100 km' },
+      },
+      { at: '2019-01-03T02:15Z', en: 'Powered descent', zh: '动力下降' },
+      {
+        at: '2019-01-03T02:26Z',
+        en: 'Landing',
+        zh: '着陆',
+        about: {
+          en: 'Von Kármán crater, 45.4° S 177.6° E',
+          zh: '冯·卡门撞击坑，南纬 45.4°，东经 177.6°',
+        },
+      },
+      {
+        at: '2019-01-03T14:22Z',
+        en: 'Yutu-2 on the surface',
+        zh: '玉兔二号驶上月面',
+      },
+    ],
+  },
+  {
+    id: 'change5',
+    reconstructed: true,
+    en: 'Chang’e 5',
+    zh: '嫦娥五号',
+    tagline: {
+      en: '2020 · bringing Moon rock home',
+      zh: '2020 · 月球采样返回',
+    },
+    summary: {
+      en: 'Four spacecraft in one: orbiter, returner, lander and ascender. The lander drilled and scooped 1,731 g of soil in Oceanus Procellarum; the ascender carried it up to the orbiter, and the returner skipped off the atmosphere before landing in Inner Mongolia — the first lunar samples brought home since 1976.',
+      zh: '“四器一体”：轨道器、返回器、着陆器和上升器。着陆器在风暴洋钻取和铲取了 1731 g 月壤，上升器把样品送回环月轨道交给轨道器，返回器以“打水漂”的方式再入大气层，降落在内蒙古。这是 1976 年以来人类首次从月球带回样品。',
+    },
+    launch: '2020-11-23T20:30:12Z',
+    agency: 'CNSA',
+    color: '#ff9d8a',
+    craft: [
+      { en: 'Orbiter + returner', zh: '轨道器 + 返回器', color: '#ff9d8a' },
+      { en: 'Lander + ascender', zh: '着陆器 + 上升器', color: '#ffd98a' },
+    ],
+    frames: ['earth', 'moon', 'earthMoon'],
+    note: {
+      en: 'Reconstructed from published times and orbits by numerical integration; the lander’s and ascender’s orbit changes, the rendezvous and the skip re-entry are sketches.',
+      zh: '根据公布的时间和轨道参数数值积分重建；着陆器和上升器的变轨、交会对接以及跳跃式再入为示意。',
+    },
+    phases: [
+      {
+        from: '2020-11-23T20:30:12Z',
+        en: 'Launch',
+        zh: '发射',
+        about: {
+          en: 'A Long March 5 from Wenchang, Hainan, sends the 8.2-tonne stack straight toward the Moon.',
+          zh: '长征五号火箭从海南文昌起飞，把 8.2 吨重的探测器直接送入地月转移轨道。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 600,
+      },
+      {
+        from: '2020-11-23T21:10Z',
+        en: 'To the Moon',
+        zh: '奔月',
+        about: {
+          en: 'Four and a half days, with two course corrections.',
+          zh: '约四天半的旅程，途中做了两次轨道修正。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+      },
+      {
+        from: '2020-11-28T12:30Z',
+        en: 'Lunar orbit',
+        zh: '环月飞行',
+        about: {
+          en: 'A 17-minute braking burn, then a second one into a circular orbit about 200 km up. The lander and ascender then leave the orbiter and returner.',
+          zh: '先点火 17 分钟减速，第二次制动后进入约 200 km 高的圆轨道。随后着陆器和上升器与轨道器和返回器分离。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 3600,
+        frame: 'moon',
+      },
+      {
+        from: '2020-12-01T14:40Z',
+        en: 'Landing',
+        zh: '着陆',
+        about: {
+          en: 'A 14-minute powered descent from 15 km to the plains near Mons Rümker.',
+          zh: '从 15 km 高度开始约 14 分钟的动力下降，降落在吕姆克山附近的平原。',
+        },
+        shot: { aim: 'body', zoom: 0.8 },
+        speed: 60,
+        frame: 'moon',
+      },
+      {
+        from: '2020-12-01T15:20Z',
+        en: 'Sampling',
+        zh: '采样',
+        about: {
+          en: 'About 19 hours of drilling and scooping, sealed into a container in the ascender.',
+          zh: '约 19 小时的钻取和表取采样，样品封装进上升器的容器里。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 3600,
+        frame: 'moon',
+      },
+      {
+        from: '2020-12-03T15:00Z',
+        en: 'Ascent and docking',
+        zh: '起飞与对接',
+        about: {
+          en: 'The ascender lifts off from the lander, reaches lunar orbit in six minutes, and two days later docks with the orbiter: the first robotic docking in lunar orbit.',
+          zh: '上升器以着陆器为发射台起飞，约 6 分钟进入环月轨道，两天后与轨道器交会对接——这是人类首次在月球轨道上进行无人交会对接。',
+        },
+        shot: { aim: 'body', zoom: 3 },
+        speed: 3600,
+        frame: 'moon',
+      },
+      {
+        from: '2020-12-12T01:30Z',
+        en: 'Home',
+        zh: '返回地球',
+        about: {
+          en: 'Two burns a day apart send the orbiter and returner back toward Earth.',
+          zh: '相隔一天的两次点火，把轨道器和返回器送上返回地球的轨道。',
+        },
+        shot: { aim: 'path', zoom: 'fit' },
+        speed: 3600,
+        frame: 'earth',
+      },
+      {
+        from: '2020-12-16T16:50Z',
+        en: 'Skip re-entry',
+        zh: '跳跃式再入',
+        about: {
+          en: 'The returner hits the atmosphere at almost 11 km/s, skips back out like a stone on water to shed speed, re-enters and lands under its parachute in Siziwang Banner.',
+          zh: '返回器以接近第二宇宙速度再入大气层，像打水漂一样先“弹”出大气层减速，再次进入后开伞，降落在四子王旗。',
+        },
+        shot: { aim: 'craft', zoom: 4 },
+        speed: 60,
+        frame: 'earth',
+      },
+    ],
+    events: [
+      { at: '2020-11-24T14:06Z', en: 'Correction 1', zh: '第一次轨道修正' },
+      { at: '2020-11-25T14:06Z', en: 'Correction 2', zh: '第二次轨道修正' },
+      {
+        at: '2020-11-28T12:58Z',
+        en: 'Lunar orbit insertion',
+        zh: '近月制动',
+        about: {
+          en: 'About 400 km up, 17 minutes',
+          zh: '距月面约 400 km，点火约 17 分钟',
+        },
+      },
+      {
+        at: '2020-11-29T12:23Z',
+        en: 'Circular orbit',
+        zh: '进入圆轨道',
+        about: { en: 'About 200 km up', zh: '高度约 200 km' },
+      },
+      {
+        at: '2020-11-29T20:40Z',
+        en: 'Lander separates',
+        zh: '着上组合体分离',
+      },
+      { at: '2020-12-01T14:57Z', en: 'Powered descent', zh: '动力下降' },
+      {
+        at: '2020-12-01T15:11Z',
+        en: 'Landing',
+        zh: '着陆',
+        about: {
+          en: 'Near Mons Rümker, 43.1° N 51.9° W',
+          zh: '吕姆克山附近，北纬 43.1°，西经 51.9°',
+        },
+      },
+      { at: '2020-12-03T15:10Z', en: 'Ascent', zh: '月面起飞' },
+      { at: '2020-12-05T21:42Z', en: 'Docking', zh: '交会对接' },
+      {
+        at: '2020-12-12T01:54Z',
+        en: 'Trans-Earth injection 1',
+        zh: '第一次月地入射',
+      },
+      {
+        at: '2020-12-13T01:51Z',
+        en: 'Trans-Earth injection 2',
+        zh: '第二次月地入射',
+      },
+      {
+        at: '2020-12-16T17:33Z',
+        en: 'Atmospheric entry',
+        zh: '再入大气层',
+        about: { en: 'About 120 km up', zh: '高度约 120 km' },
+      },
+      {
+        at: '2020-12-16T17:59Z',
+        en: 'Landing',
+        zh: '着陆',
+        about: {
+          en: 'Siziwang Banner, Inner Mongolia',
+          zh: '内蒙古四子王旗',
         },
       },
     ],
@@ -1520,6 +2482,146 @@ const HELIO_MISSIONS: Mission[] = [
         en: 'Touchdown in Jezero',
         zh: '降落杰泽罗陨石坑',
         about: { en: '18.4° N, 77.5° E', zh: '北纬 18.4°，东经 77.5°' },
+      },
+    ],
+  },
+  {
+    id: 'tianwen1',
+    kind: 'helio',
+    reconstructed: true,
+    en: 'Tianwen-1',
+    zh: '天问一号',
+    tagline: {
+      en: '2020 · orbit, land and rove on the first try',
+      zh: '2020 · 一次实现“绕、着、巡”',
+    },
+    summary: {
+      en: 'China’s first Mars mission sent an orbiter, a lander and the Zhurong rover together. After three months in orbit surveying the landing area, the lander touched down in Utopia Planitia on 15 May 2021, Beijing time.',
+      zh: '中国首次火星探测任务，环绕器、着陆器和祝融号火星车一同出发。环绕火星三个月、勘察预选着陆区后，着陆器于北京时间 2021 年 5 月 15 日降落在乌托邦平原。',
+    },
+    launch: '2020-07-23T04:41:15Z',
+    agency: 'CNSA',
+    color: '#ff9a6b',
+    craft: [
+      { en: 'Orbiter', zh: '环绕器', color: '#ff9a6b' },
+      { en: 'Lander + Zhurong', zh: '着陆巡视器', color: '#ffd27f' },
+    ],
+    frames: ['sun', 'mars'],
+    note: {
+      en: 'Reconstructed from published times and orbits with two-body arcs (Sun, Earth, Mars); course corrections, including the deep-space manoeuvre of October 2020, are not drawn. Times are at Mars.',
+      zh: '按公布的时间和轨道参数，用二体轨道（太阳、地球、火星）分段拼接重建；途中的轨道修正（包括 2020 年 10 月的深空机动）没有单独画出。时间按火星当地的事件时刻。',
+    },
+    phases: [
+      {
+        from: '2020-07-23T04:41:15Z',
+        en: 'Launch',
+        zh: '发射',
+        about: {
+          en: 'A Long March 5 from Wenchang sends the five-tonne spacecraft straight onto its path to Mars.',
+          zh: '长征五号火箭从文昌起飞，把约 5 吨重的探测器直接送入地火转移轨道。',
+        },
+        shot: { aim: 'craft', zoom: 6 },
+        speed: 60,
+      },
+      {
+        from: '2020-07-23T05:30Z',
+        en: 'Cruise to Mars',
+        zh: '奔火巡航',
+        about: {
+          en: 'Six and a half months and some 470 million km, with four course corrections and a deep-space manoeuvre in October.',
+          zh: '约六个半月、4.7 亿 km 的旅程，途中做了四次轨道修正和一次深空机动。',
+        },
+        shot: { aim: 'path', zoom: au(1.9) },
+        speed: 604800,
+        frame: 'sun',
+      },
+      {
+        from: '2021-02-08T12:00Z',
+        en: 'Into Mars orbit',
+        zh: '火星捕获',
+        about: {
+          en: 'A braking burn of about 15 minutes near Mars lets its gravity capture the spacecraft, on a long orbit of about ten Martian days.',
+          zh: '在火星附近点火制动约 15 分钟，被火星引力捕获，进入周期约 10 个火星日的大椭圆轨道。',
+        },
+        shot: {
+          aim: 'body',
+          body: 'mars',
+          zoom: radii('mars', 70),
+        },
+        speed: 21600,
+        frame: 'mars',
+      },
+      {
+        from: '2021-02-15T00:00Z',
+        en: 'Surveying from orbit',
+        zh: '环火勘察',
+        about: {
+          en: 'At the far point the orbit is turned over the poles; then it shrinks to a parking orbit of two Martian days, from which the orbiter photographs the landing area for three months.',
+          zh: '在远火点把轨道调整为经过两极的极轨道，随后缩小为周期 2 个火星日的停泊轨道，环绕器在这条轨道上对预选着陆区拍摄了三个月。',
+        },
+        shot: {
+          aim: 'body',
+          body: 'mars',
+          zoom: radii('mars', 30),
+        },
+        speed: 86400,
+        frame: 'mars',
+      },
+      {
+        from: '2021-05-14T20:00Z',
+        en: 'Landing',
+        zh: '着陆',
+        about: {
+          en: 'The lander separates, enters the atmosphere at about 4.8 km/s and, with a heat shield, a parachute and its engine, comes to rest in Utopia Planitia nine minutes later.',
+          zh: '着陆巡视器分离后以约 4.8 km/s 的速度进入火星大气，依靠防热罩、降落伞和发动机减速，约 9 分钟后降落在乌托邦平原。',
+        },
+        shot: {
+          aim: 'body',
+          body: 'mars',
+          zoom: radii('mars', 2.4),
+          above: true,
+        },
+        speed: 60,
+        frame: 'mars',
+      },
+    ],
+    events: [
+      { at: '2020-07-23T04:41:15Z', en: 'Launch', zh: '发射' },
+      {
+        at: '2020-10-09T15:00Z',
+        en: 'Deep-space manoeuvre',
+        zh: '深空机动',
+      },
+      {
+        at: '2021-02-10T11:52Z',
+        en: 'Mars orbit insertion',
+        zh: '火星捕获',
+        about: { en: 'About 400 km up', zh: '近火点约 400 km' },
+      },
+      {
+        at: '2021-02-15T09:00Z',
+        en: 'Polar orbit',
+        zh: '调整为极轨道',
+      },
+      {
+        at: '2021-02-23T22:29Z',
+        en: 'Parking orbit',
+        zh: '进入停泊轨道',
+        about: { en: 'Two Martian days per orbit', zh: '周期 2 个火星日' },
+      },
+      {
+        at: '2021-05-14T20:20Z',
+        en: 'Lander separates',
+        zh: '两器分离',
+      },
+      {
+        at: '2021-05-14T23:18Z',
+        en: 'Touchdown',
+        zh: '着陆',
+        about: {
+          en: 'Utopia Planitia, 25.1° N 109.9° E',
+          zh: '乌托邦平原，北纬 25.1°，东经 109.9°',
+        },
       },
     ],
   },
