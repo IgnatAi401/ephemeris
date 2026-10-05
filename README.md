@@ -12,7 +12,7 @@ English · [中文](README.zh-CN.md)
 - **Learn**: interactive guides to seven common orbit types and the six orbital elements.
 - **Mission replays**: Apollo, Artemis, Chang'e, Voyager, Cassini, Tianwen-1 and more, replayed along their real (or reconstructed) trajectories.
 
-A static site built with React, [ogl](https://github.com/oframe/ogl) (WebGL 2) and [satellite.js](https://github.com/shashwatak/satellite-js), hosted on GitHub Pages. GitHub Actions refreshes the ephemerides twice a day.
+A static site built with React, [ogl](https://github.com/oframe/ogl) (WebGL 2) and [satellite.js](https://github.com/shashwatak/satellite-js), hosted on Cloudflare Workers (static assets). GitHub Actions refreshes the ephemerides twice a day.
 
 ## Run locally
 
