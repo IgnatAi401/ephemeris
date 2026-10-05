@@ -30,8 +30,8 @@ export type OrbitStage = {
   rebuilt: Set<() => void>;
 };
 
-const LAND_URL = '/maps/countries-50m.json';
-const LIGHTS_URL = '/textures/night-lights.webp';
+const LAND_URL = `${import.meta.env.BASE_URL}maps/countries-50m.json`;
+const LIGHTS_URL = `${import.meta.env.BASE_URL}textures/night-lights.webp`;
 let built: OrbitStage | null = null;
 let pending: Promise<OrbitStage> | null = null;
 // Without WebGL 2 the view cannot be built at all; do not retry every visit.
@@ -120,7 +120,7 @@ function loadLights() {
 
 async function build(): Promise<OrbitStage> {
   // The L1/L2 and lunar spacecraft are optional: the map works without them.
-  const spacecraft = fetch('/data/spacecraft.json')
+  const spacecraft = fetch(`${import.meta.env.BASE_URL}data/spacecraft.json`)
     .then((response) =>
       response.ok ? (response.json() as Promise<SpacecraftSnapshot>) : null,
     )
@@ -130,7 +130,7 @@ async function build(): Promise<OrbitStage> {
   land.catch(() => {});
   const [{ createOrbitScene }, orbits] = await Promise.all([
     import('@/lib/orbit-scene'),
-    fetch('/data/orbits.json').then((response) => {
+    fetch(`${import.meta.env.BASE_URL}data/orbits.json`).then((response) => {
       if (!response.ok) throw new Error('Orbits unavailable');
       return response.text();
     }),

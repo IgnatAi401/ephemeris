@@ -30,7 +30,7 @@ let pending: Promise<Catalog> | null = null;
 
 /** The catalogue for `fleet`, fetched once. */
 export function loadCatalog(fleet: Fleet) {
-  pending ??= fetch('/data/catalog.json')
+  pending ??= fetch(`${import.meta.env.BASE_URL}data/catalog.json`)
     .then((response) => {
       if (!response.ok) throw new Error('Catalog unavailable');
       return response.json() as Promise<CatalogFile>;
