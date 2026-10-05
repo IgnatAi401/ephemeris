@@ -8,3 +8,15 @@ dist/
 # Fetched ephemerides: built into each deploy, never committed. Only the small
 # status/status.json is committed back by the workflow.
 public/data/
+
+# Local development notes and tool settings (kept on disk, not published).
+AGENTS.md
+CLAUDE.md
+missions-plan.md
+orbit-site-brief.md
+.claude/
+.vscode/
+
+# Local macOS folder icon artwork and Finder resource fork.
+.folder-icon/
+Icon?

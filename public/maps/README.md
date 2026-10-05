@@ -2,7 +2,7 @@
 
 `countries-50m.json` is derived from the `world-atlas@2.0.2` TopoJSON dataset,
 using Natural Earth's 1:50m Admin 0 boundaries (Natural Earth 4.1.0). It was
-copied unchanged from the personal site (`personal_profile/public/maps`), where
+copied unchanged from the author's personal site, where
 it was simplified; `provenance.json` records the original checksum and the
 processing.
 
