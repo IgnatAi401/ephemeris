@@ -40,13 +40,15 @@ const fleet = createFleet(snapshot);
 // LEO shells sit 1.03–1.3; GNSS runs from MEO (~3.9) to GEO (~6.6), with
 // Galileo 5 and 6, stranded on eccentric orbits in 2014, dipping to ~3.7;
 // debris clouds reach a few thousand km; new launches include transfer orbits.
+// QZSS (Michibiki) flies inclined geosynchronous orbits with e ≈ 0.075, out to
+// ~7.1 at apogee, and may land in either the GNSS or the GEO group.
 const shells = {
   leo: [1.02, 1.32],
   // CelesTrak's stations group also carries a few nearby objects (a Fregat
   // upper-stage fragment near 860 km), so it shares the LEO band.
   station: [1.02, 1.32],
-  gnss: [3.5, 6.9],
-  geo: [6.0, 7.0],
+  gnss: [3.5, 7.3],
+  geo: [6.0, 7.3],
   debris: [1.01, 2.2],
   new: [1.0, 40],
 };
