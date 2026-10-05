@@ -1,5 +1,5 @@
 /** The deployed origin. The workflow pulls the previous data from here when a
- * source fails; public/CNAME holds the same host. */
+ * source fails; wrangler.toml routes the same host. */
 export const SITE_HOST = 'orbit.ignat.ai';
 
 export const SOURCES = [

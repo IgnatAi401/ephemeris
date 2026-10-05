@@ -1,4 +1,5 @@
-# Refreshes the ephemerides and deploys orbit.ignat.ai to GitHub Pages.
+# Refreshes the ephemerides and deploys orbit.ignat.ai to Cloudflare Workers
+# (static assets, see wrangler.toml).
 #
 # - schedule: CelesTrak twice a day, at an off-peak minute (UTC); the Monday
 #   morning run also refreshes JPL Horizons, so the spacecraft data is weekly.
@@ -6,7 +7,7 @@
 #   to accept a group count that really did drop by more than 20%.
 # - push to main: deploys the code with the live site's current data.
 #
-# The fetched data is never committed: it is built into the Pages artifact.
+# The fetched data is never committed: it is built into the deployed assets.
 # Whatever is not refreshed, or fails, is copied from the live site
 # (scripts/prepare-data.mjs), so the site always keeps working data. Only the
 # small status/status.json is committed back after a scheduled or manual run,
@@ -37,7 +38,7 @@ permissions:
 # One deployment at a time; a queued run waits instead of cancelling one in
 # progress.
 concurrency:
-  group: pages
+  group: deploy
   cancel-in-progress: false
 
 jobs:
@@ -86,30 +87,20 @@ jobs:
           ACCEPT_DROP: ${{ inputs.accept_drop && '--accept-drop' || '' }}
         run: node scripts/prepare-data.mjs --constellations="$CONSTELLATIONS" --spacecraft="$SPACECRAFT" $ACCEPT_DROP
       - run: pnpm build
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: dist
+      # Only this step sees the Cloudflare token.
+      - name: Deploy to Cloudflare Workers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler deploy
       - uses: actions/upload-artifact@v7
         with:
           name: status
           path: public/data/status.json
           retention-days: 3
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
-
   commit-status:
-    needs: deploy
+    needs: build
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -135,7 +126,7 @@ jobs:
   # Fresh data that failed the checks was replaced by the previous snapshot
   # and deployed; fail the run afterwards so the failure is noticed.
   report:
-    needs: [build, deploy]
+    needs: build
     if: needs.build.outputs.degraded == 'true'
     runs-on: ubuntu-latest
     steps:

@@ -12,7 +12,7 @@
 - **轨道科普**：七类常见轨道和轨道六根数的交互讲解。
 - **历史任务回放**：阿波罗、阿尔忒弥斯、嫦娥、旅行者、卡西尼、天问一号等，按真实（或根据公开资料重建的）轨迹重演。
 
-纯静态网站，用 React、[ogl](https://github.com/oframe/ogl)（WebGL 2）和 [satellite.js](https://github.com/shashwatak/satellite-js) 构建，部署在 GitHub Pages；星历由 GitHub Actions 每天自动更新两次。
+纯静态网站，用 React、[ogl](https://github.com/oframe/ogl)（WebGL 2）和 [satellite.js](https://github.com/shashwatak/satellite-js) 构建，部署在 Cloudflare Workers（静态资源）；星历由 GitHub Actions 每天自动更新两次。
 
 ## 本地运行
 
