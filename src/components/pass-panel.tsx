@@ -7,7 +7,7 @@ import type { Fleet } from '@/lib/orbits';
 import {
   compass,
   MIN_ELEVATION,
-  predictPasses,
+  predictPassesAsync,
   SUN_LIMIT,
   type Observer,
   type Pass,
@@ -93,7 +93,15 @@ export function PassPanel({
       for (const entry of targets) {
         const model = await precise(fleet, entry);
         if (cancelled) return;
-        all.push(...predictPasses(model, observer, from, DAYS));
+        const found = await predictPassesAsync(
+          model,
+          observer,
+          from,
+          DAYS,
+          () => cancelled,
+        );
+        if (!found || cancelled) return;
+        all.push(...found);
       }
       all.sort((a, b) => a.start.time - b.start.time);
       setPasses(all);
