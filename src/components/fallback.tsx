@@ -7,7 +7,7 @@ export function Fallback({ lang }: { lang: Language }) {
   return (
     <div className="orbit-poster">
       <img
-        src="/poster.webp"
+        src={`${import.meta.env.BASE_URL}poster.webp`}
         alt={t(
           'A still of the orbit view: Earth surrounded by satellite constellations.',
           '轨道视图静态截图：被卫星星座环绕的地球。',

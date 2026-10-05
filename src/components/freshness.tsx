@@ -13,7 +13,10 @@ export function Freshness({ lang }: { lang: Language }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/data/status.json', { cache: 'no-cache', signal: controller.signal })
+    fetch(`${import.meta.env.BASE_URL}data/status.json`, {
+      cache: 'no-cache',
+      signal: controller.signal,
+    })
       .then((response) => (response.ok ? response.json() : null))
       .then((status: { constellations?: { fetched?: string } } | null) => {
         const time = Date.parse(status?.constellations?.fetched ?? '');
