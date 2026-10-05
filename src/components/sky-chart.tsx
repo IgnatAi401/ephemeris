@@ -23,9 +23,30 @@ export function SkyChart({
       getComputedStyle(element).getPropertyValue('--font-mono').trim() ||
       'monospace';
     let frame = 0;
+    let lastSize = 0;
+    let lastDpr = 0;
+    let lastTime: number | null | undefined;
     const draw = () => {
       const size = element.clientWidth;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const current = simTime();
+      const time =
+        pass && current >= pass.start.time && current <= pass.end.time
+          ? current
+          : null;
+      // A panel can briefly have no layout while opening or unmounting.
+      // Keep the loop alive without drawing invalid, negative-radius arcs.
+      // Outside the pass (or while paused), the chart is entirely static.
+      if (
+        size <= 32 ||
+        (size === lastSize && dpr === lastDpr && time === lastTime)
+      ) {
+        frame = window.requestAnimationFrame(draw);
+        return;
+      }
+      lastSize = size;
+      lastDpr = dpr;
+      lastTime = time;
       if (element.width !== Math.round(size * dpr)) {
         element.width = Math.round(size * dpr);
         element.height = Math.round(size * dpr);
@@ -101,12 +122,23 @@ export function SkyChart({
         context.arc(sx, sy, 2.5, 0, Math.PI * 2);
         context.fill();
         // Where the satellite is at the simulated instant, if mid-pass.
-        const time = simTime();
-        if (time >= pass.start.time && time <= pass.end.time) {
-          let point = pass.path[0];
-          for (const sample of pass.path)
-            if (sample.time <= time) point = sample;
-          const [x, y] = at(point.azimuth, point.elevation);
+        if (time !== null) {
+          let index = 0;
+          while (
+            index + 1 < pass.path.length &&
+            pass.path[index + 1].time <= time
+          )
+            index++;
+          const a = pass.path[index];
+          const b = pass.path[Math.min(index + 1, pass.path.length - 1)];
+          const fraction =
+            b.time === a.time ? 0 : (time - a.time) / (b.time - a.time);
+          // Follow the sampled arc continuously, including crossing north.
+          const turn = ((b.azimuth - a.azimuth + 540) % 360) - 180;
+          const [x, y] = at(
+            a.azimuth + turn * fraction,
+            a.elevation + (b.elevation - a.elevation) * fraction,
+          );
           context.fillStyle = '#fff';
           context.shadowColor = 'rgba(159, 240, 200, 0.9)';
           context.shadowBlur = 10;

@@ -80,6 +80,8 @@ export type SceneView = {
    * `cameraAxes`, from their x axis); the Sun keeps its side of the frame
    * while Earth turns underneath. */
   azimuth: number;
+  /** Screen rotation used while handing the camera between reference frames. */
+  roll?: number;
   /** What the camera looks at, as weights: 0 for both is Earth's centre
    * (the Sun's around the Sun); `aimBody` 1 the replayed mission's body in
    * focus (the Moon, or a planet), `aimCraft` 1 its spacecraft. */
@@ -516,6 +518,12 @@ export function createOrbitScene(
   let samples = new Float32Array(0);
   let nexts = new Float32Array(0);
   const trailSatellites: number[] = [];
+  const navigationSatellites: number[] = [];
+  let positionsAt = Number.NaN;
+  let trailsAt = new Float64Array(0);
+  let cachedSelection: Selection | null = null;
+  let selectionAt = Number.NaN;
+  const selectionPaths: (readonly number[] | null)[][] = [[], [], []];
   let camera: Camera | null = null;
   // Each group's point opacity in the last frame: hidden groups cannot be
   // picked.
@@ -532,7 +540,7 @@ export function createOrbitScene(
   // otherwise at most ten times a second.
   let hazeKey = '';
   let hazeAt = Number.NEGATIVE_INFINITY;
-  let size = { width: 1, height: 1, dpr: 1 };
+  let size = { width: 0, height: 0, dpr: 1 };
   // The scene may be built before its overlay joins the page (lib/orbit-stage.ts).
   const font =
     getComputedStyle(overlay.isConnected ? overlay : document.documentElement)
@@ -541,6 +549,7 @@ export function createOrbitScene(
 
   const setFleet = (next: Fleet) => {
     fleet = next;
+    positionsAt = Number.NaN;
     positions = new Float32Array(next.count * 3);
     const group = new Float32Array(next.count);
     const shade = new Float32Array(next.count);
@@ -565,8 +574,12 @@ export function createOrbitScene(
       }),
     });
     trailSatellites.length = 0;
-    for (let index = 0; index < next.count; index++)
+    navigationSatellites.length = 0;
+    for (let index = 0; index < next.count; index++) {
       if (TRAIL_SPAN[next.group[index]] > 0) trailSatellites.push(index);
+      if (IS_GNSS[next.group[index]]) navigationSatellites.push(index);
+    }
+    trailsAt = new Float64Array(trailSatellites.length).fill(Number.NaN);
     // Two vertices per sample, one either side of the ribbon.
     const vertices = trailSatellites.length * TRAIL_SAMPLES * 2;
     samples = new Float32Array(vertices * 3);
@@ -622,7 +635,11 @@ export function createOrbitScene(
   const setLights = (image: HTMLImageElement) => upload(lights, image);
 
   const resize = (width: number, height: number, dpr: number) => {
+    if (size.width === width && size.height === height && size.dpr === dpr)
+      return;
     size = { width, height, dpr };
+    hazeKey = '';
+    hazeAt = Number.NEGATIVE_INFINITY;
     renderer.dpr = dpr;
     renderer.setSize(width, height);
     overlay.width = Math.round(width * dpr);
@@ -822,11 +839,12 @@ export function createOrbitScene(
     text: SceneText,
     mission: MissionView,
   ) => {
+    pickAlpha.fill(0);
     const { width, height, dpr } = size;
     const { time } = view;
     const { track } = mission;
     const axes = view.cameraAxes ?? ECLIPTIC_AXES;
-    const local = basis(view.elevation, view.azimuth);
+    const local = basis(view.elevation, view.azimuth, view.roll);
     const map = (v: readonly number[]) =>
       [0, 1, 2].map(
         (i) => v[0] * axes[0][i] + v[1] * axes[1][i] + v[2] * axes[2][i],
@@ -1060,7 +1078,7 @@ export function createOrbitScene(
     const axes = view.cameraAxes;
     const orientation = axes
       ? (() => {
-          const local = basis(view.elevation, view.azimuth);
+          const local = basis(view.elevation, view.azimuth, view.roll);
           const map = (v: readonly number[]) =>
             [0, 1, 2].map(
               (i) => v[0] * axes[0][i] + v[1] * axes[1][i] + v[2] * axes[2][i],
@@ -1071,7 +1089,11 @@ export function createOrbitScene(
             up: map(local.up),
           };
         })()
-      : basis(view.elevation, Math.atan2(sun[1], sun[0]) + view.azimuth);
+      : basis(
+          view.elevation,
+          Math.atan2(sun[1], sun[0]) + view.azimuth,
+          view.roll,
+        );
     const { toward, right, up } = orientation;
     const mission = view.mission ?? null;
     // A replayed mission brings its own Moon, from the same JPL ephemeris as
@@ -1224,13 +1246,24 @@ export function createOrbitScene(
     // Nothing to propagate while every group is hidden (a mission replay).
     const anyGroup = pickAlpha.some((alpha) => alpha > 0.001);
     if (fleet && pointMesh && trailMesh && anyGroup) {
-      propagate(fleet, time, positions);
-      pointMesh.geometry.attributes.position.needsUpdate = true;
-      if (view.trails > 0.01) {
+      if (positionsAt !== time) {
+        propagate(fleet, time, positions);
+        positionsAt = time;
+        pointMesh.geometry.attributes.position.needsUpdate = true;
+      }
+      if (trails.uniforms.uAlpha.value.some((alpha: number) => alpha > 0.001)) {
         // Sample the arc behind each satellite; each vertex also gets the
         // next sample toward the tail so the ribbon can be widened on screen.
         const current = fleet;
+        let changed = false;
         trailSatellites.forEach((satellite, slot) => {
+          if (
+            trails.uniforms.uAlpha.value[current.group[satellite]] <= 0.001 ||
+            trailsAt[slot] === time
+          )
+            return;
+          trailsAt[slot] = time;
+          changed = true;
           const span =
             period(current, satellite) * TRAIL_SPAN[current.group[satellite]];
           const base = slot * TRAIL_SAMPLES * 6;
@@ -1263,8 +1296,10 @@ export function createOrbitScene(
             }
           }
         });
-        trailMesh.geometry.attributes.position.needsUpdate = true;
-        trailMesh.geometry.attributes.next.needsUpdate = true;
+        if (changed) {
+          trailMesh.geometry.attributes.position.needsUpdate = true;
+          trailMesh.geometry.attributes.next.needsUpdate = true;
+        }
         renderer.render({ scene: trailMesh, target: into, clear: false });
       }
       if (haloAlpha > 0.001) {
@@ -1339,8 +1374,29 @@ export function createOrbitScene(
     if (selected) {
       const color = selected.color;
       const span = Math.min(selected.period, DAY_MS);
+      // Exact samples depend on simulation time, not on the camera. Keep
+      // them while paused, including during a drag or a panel transition.
+      if (cachedSelection !== selected || selectionAt !== time) {
+        cachedSelection = selected;
+        selectionAt = time;
+        const from = time - span / 2;
+        const to = time + span * 1.5;
+        for (let step = 0; step <= 120; step++)
+          selectionPaths[0][step] = selected.position(
+            from + ((time - from) * step) / 120,
+          );
+        for (let step = 0; step <= 120; step++)
+          selectionPaths[1][step] = selected.position(
+            time + ((to - time) * step) / 120,
+          );
+        for (let step = 0; step <= 180; step++)
+          selectionPaths[2][step] = selected.position(
+            time + (step / 180 - 0.5) * span,
+          );
+      }
       const gmstNow = siderealAngle(time);
       const strokeTrack = (
+        path: number,
         from: number,
         to: number,
         alpha: number,
@@ -1354,7 +1410,7 @@ export function createOrbitScene(
         const steps = 120;
         for (let step = 0; step <= steps; step++) {
           const t = from + ((to - from) * step) / steps;
-          const p = selected.position(t);
+          const p = selectionPaths[path][step];
           if (!p) {
             drawing = false;
             continue;
@@ -1386,15 +1442,15 @@ export function createOrbitScene(
         context.stroke();
         context.setLineDash([]);
       };
-      strokeTrack(time - span / 2, time, 0.28, [2, 3]);
-      strokeTrack(time, time + span * 1.5, 0.6, []);
+      strokeTrack(0, time - span / 2, time, 0.28, [2, 3]);
+      strokeTrack(1, time, time + span * 1.5, 0.6, []);
       // The orbit itself, broken where Earth hides it.
       context.strokeStyle = rgba(color, 0.75);
       context.lineWidth = 1.3;
       context.beginPath();
       let drawing = false;
       for (let step = 0; step <= 180; step++) {
-        const p = selected.position(time + (step / 180 - 0.5) * span);
+        const p = selectionPaths[2][step];
         const point = p && !hidden(p) ? screen(p) : null;
         if (!point || !Number.isFinite(point[0] + point[1])) {
           drawing = false;
@@ -1570,10 +1626,9 @@ export function createOrbitScene(
         const [sx, sy] = screen(site);
         if (!Number.isFinite(sx + sy)) continue;
         let tracked = 0;
-        for (let index = 0; index < fleet.count; index++) {
+        for (const index of navigationSatellites) {
           const group = fleet.group[index];
-          if (!IS_GNSS[group] || elevation(site, positions, index * 3) < MASK)
-            continue;
+          if (elevation(site, positions, index * 3) < MASK) continue;
           tracked++;
           const visible = view.groups[group];
           const target = [

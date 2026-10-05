@@ -41,12 +41,12 @@ type Sample = {
   dark: boolean;
 };
 
-export function predictPasses(
+function* scanPasses(
   precise: Precise,
   observer: Observer,
   from: number,
   days = 5,
-): Pass[] {
+): Generator<void, Pass[]> {
   const { lib } = precise;
   const site = {
     latitude: observer.latitude * DEG,
@@ -106,6 +106,7 @@ export function predictPasses(
   )
     ? { time: from, reason: 'now' }
     : null;
+  let scanned = 0;
   for (let time = from + STEP; time <= stop + STEP; time += STEP) {
     const current = time > stop ? null : sample(time);
     const now = visible(current);
@@ -154,8 +155,57 @@ export function predictPasses(
       }
       opened = null;
     }
+    // A batch is small enough to interrupt between expensive SGP4 scans.
+    if (++scanned % 128 === 0) yield;
   }
   return passes;
+}
+
+/** Synchronous version for scripts and callers without an animated view. */
+export function predictPasses(
+  precise: Precise,
+  observer: Observer,
+  from: number,
+  days = 5,
+): Pass[] {
+  const scan = scanPasses(precise, observer, from, days);
+  let result = scan.next();
+  while (!result.done) result = scan.next();
+  return result.value;
+}
+
+/** Yield a task without the accumulating delay of nested setTimeouts. */
+const yieldToBrowser = () =>
+  new Promise<void>((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      channel.port2.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+
+/** The same full-resolution forecast, split into short tasks so rendering
+ * and input can continue. A superseded request stops at its next batch. */
+export async function predictPassesAsync(
+  precise: Precise,
+  observer: Observer,
+  from: number,
+  days = 5,
+  cancelled = () => false,
+): Promise<Pass[] | null> {
+  const scan = scanPasses(precise, observer, from, days);
+  let start = performance.now();
+  while (!cancelled()) {
+    const result = scan.next();
+    if (result.done) return result.value;
+    if (performance.now() - start >= 4) {
+      await yieldToBrowser();
+      start = performance.now();
+    }
+  }
+  return null;
 }
 
 /** Compass point for an azimuth in degrees. */

@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import { Search } from 'lucide-react';
 import type { Catalog, CatalogEntry } from '@/lib/catalog';
 import type { Language } from '@/lib/i18n';
@@ -23,7 +29,10 @@ export function SearchBox({
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
-  const results = catalog && query ? catalog.search(query, 10) : [];
+  const results = useMemo(
+    () => (catalog && query ? catalog.search(query, 10) : []),
+    [catalog, query],
+  );
 
   useEffect(() => {
     const focus = (event: KeyboardEvent) => {

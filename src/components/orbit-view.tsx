@@ -36,11 +36,7 @@ import type {
 } from '@/lib/orbit-scene';
 import { drawTape, TAPE_PX_PER_HOUR } from '@/lib/orbit-tape';
 import { drawMissionTape } from '@/lib/mission-tape';
-import {
-  fromLocal,
-  loadMissionTrack,
-  type MissionTrack,
-} from '@/lib/mission-track';
+import { loadMissionTrack, type MissionTrack } from '@/lib/mission-track';
 import {
   missionById,
   type FrameId,
@@ -84,7 +80,12 @@ import {
   ORBIT_TYPES,
   type OrbitTypeId,
 } from '@/lib/orbit-types';
-import { basis, focalLength, frameHalf } from '@/lib/scene-camera';
+import {
+  basis,
+  focalLength,
+  frameHalf,
+  reframeCamera,
+} from '@/lib/scene-camera';
 import { AU_KM, bodyByKey } from '@/lib/planets';
 
 type Preset = 'leo' | 'gnss' | 'moon' | 'deep';
@@ -106,7 +107,7 @@ type Pose = Omit<
   | 'example'
   | 'mission'
   | 'cameraAxes'
->;
+> & { roll: number };
 
 const DEG = Math.PI / 180;
 // Camera and topic weights per scale. The overview frames the GNSS shells;
@@ -116,6 +117,7 @@ const POSES: Record<Focus, Pose> = {
     zoom: 3.7,
     elevation: 22 * DEG,
     azimuth: 62 * DEG,
+    roll: 0,
     leo: 1,
     gnss: 1,
     trails: 1,
@@ -134,6 +136,7 @@ const POSES: Record<Focus, Pose> = {
     zoom: 1.35,
     elevation: 16 * DEG,
     azimuth: 52 * DEG,
+    roll: 0,
     leo: 1,
     gnss: 0.18,
     trails: 1,
@@ -152,6 +155,7 @@ const POSES: Record<Focus, Pose> = {
     zoom: 8.5,
     elevation: 26 * DEG,
     azimuth: 70 * DEG,
+    roll: 0,
     leo: 1,
     gnss: 1,
     trails: 1,
@@ -170,6 +174,7 @@ const POSES: Record<Focus, Pose> = {
     zoom: 72,
     elevation: 34 * DEG,
     azimuth: 48 * DEG,
+    roll: 0,
     leo: 1,
     gnss: 0.55,
     trails: 0.3,
@@ -188,6 +193,7 @@ const POSES: Record<Focus, Pose> = {
     zoom: 245,
     elevation: 40 * DEG,
     azimuth: 44 * DEG,
+    roll: 0,
     leo: 1,
     gnss: 0.4,
     trails: 0,
@@ -517,6 +523,7 @@ export function OrbitView({
   // Camera drag: active pointers, and the spin left after release (rad/ms).
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const spin = useRef({ azimuth: 0, elevation: 0, at: 0 });
+  const wheelZoom = useRef<number | null>(null);
   const pinch = useRef<number | null>(null);
   // Opening sequence: starts once the scene is ready; null until then.
   const intro = useRef<{ start: number | null; done: boolean }>({
@@ -577,6 +584,7 @@ export function OrbitView({
   const dock = useRef<HTMLDivElement>(null);
   const insetRight = useRef(0);
   const catalogRef = useRef<Catalog | null>(null);
+  const catalogPending = useRef<Promise<Catalog | null> | null>(null);
   const fleetRef = useRef<Fleet | null>(fleet);
   // --- Learn panel ----------------------------------------------------------
   const [learnOpen, setLearnOpen] = useState(false);
@@ -602,6 +610,7 @@ export function OrbitView({
     null,
   );
   const [missionFailed, setMissionFailed] = useState(false);
+  const missionRequest = useRef(0);
   const [frame, setFrame] = useState<FrameId>('earth');
   const [autopilot, setAutopilot] = useState(true);
   const [shot, setShot] = useState<Shot['aim'] | null>(null);
@@ -660,7 +669,8 @@ export function OrbitView({
     const current = fleetRef.current;
     if (!current) return Promise.resolve(null);
     if (catalogRef.current) return Promise.resolve(catalogRef.current);
-    return loadCatalog(current).then(
+    if (catalogPending.current) return catalogPending.current;
+    const pending = loadCatalog(current).then(
       (loaded) => {
         catalogRef.current = loaded;
         setCatalog(loaded);
@@ -668,6 +678,11 @@ export function OrbitView({
       },
       () => null,
     );
+    catalogPending.current = pending;
+    void pending.finally(() => {
+      if (catalogPending.current === pending) catalogPending.current = null;
+    });
+    return pending;
   };
   const select = (entry: CatalogEntry | null) => {
     selectedRef.current = entry;
@@ -713,6 +728,7 @@ export function OrbitView({
     const now = frameClock();
     intro.current.done = true;
     spin.current = { azimuth: 0, elevation: 0, at: 0 };
+    wheelZoom.current = null;
     const current = poseAt(tween.current, now);
     current.azimuth =
       target.azimuth +
@@ -949,6 +965,7 @@ export function OrbitView({
   // --- Camera ---------------------------------------------------------------
   /** The pose on screen now, frozen: user input takes over from any tween. */
   const holdPose = () => {
+    wheelZoom.current = null;
     const pose = poseAt(tween.current, performance.now());
     // A preset that fits the Moon hands over its fitted zoom.
     const camera = sceneRef.current?.camera();
@@ -968,19 +985,23 @@ export function OrbitView({
     );
     invalidate.current();
   };
-  const zoomBy = (factor: number) => {
+  const zoomBy = (factor: number, smooth = false) => {
+    const pending = smooth ? wheelZoom.current : null;
     const pose = holdPose();
+    if (smooth) spin.current = { azimuth: 0, elevation: 0, at: 0 };
     // A mission's camera may close in on the Moon; zooming takes over from
     // its autopilot.
     const replay = missionRef.current;
     if (replay?.autopilot) setMissionAutopilot(false);
-    pose.zoom = Math.max(
+    const zoom = Math.max(
       replay ? MISSION_ZOOM_MIN : ZOOM_RANGE[0],
       Math.min(
         replay?.track.helio ? HELIO_ZOOM_MAX : ZOOM_RANGE[1],
-        pose.zoom * factor,
+        (pending ?? pose.zoom) * factor,
       ),
     );
+    if (smooth && !reducedMotion()) wheelZoom.current = zoom;
+    else pose.zoom = zoom;
     invalidate.current();
   };
   const go = (next: Focus) => {
@@ -1008,34 +1029,42 @@ export function OrbitView({
     if (!state) return { zoom: POSES.overview.zoom, aim: [0, 0, 0] };
     const { track, frame: id } = state;
     const now = track.basis(id, simTime());
-    const { right, up } = basis(from.elevation, from.azimuth);
-    const point = [0, 0, 0];
+    const { right, up } = basis(from.elevation, from.azimuth, from.roll);
     let [left, top, rightmost, bottom] = [
       Infinity,
       -Infinity,
       -Infinity,
       Infinity,
     ];
-    const shown: number[][] = [];
-    track.craft.forEach((_, index) => {
-      const path = track.localPath(index, id);
+    const paths = track.craft.map((_, index) => track.localPath(index, id));
+    const shown = new Float64Array(
+      paths.reduce((count, path) => count + path.length, 0),
+    );
+    const origin = now.axes.map(
+      (axis) =>
+        axis[0] * now.origin[0] +
+        axis[1] * now.origin[1] +
+        axis[2] * now.origin[2],
+    );
+    let cursor = 0;
+    for (const path of paths) {
       for (let at = 0; at < path.length; at += 3) {
-        fromLocal(now, path, at, point);
-        // Into the camera's axes, then across and up the screen.
-        const local = now.axes.map(
-          (axis) =>
-            axis[0] * point[0] + axis[1] * point[1] + axis[2] * point[2],
-        );
-        const x =
-          local[0] * right[0] + local[1] * right[1] + local[2] * right[2];
-        const y = local[0] * up[0] + local[1] * up[1] + local[2] * up[2];
-        shown.push(local);
+        // Frame axes are orthonormal: no world round trip or per-point
+        // arrays are needed to express the path in those same axes now.
+        const px = origin[0] + path[at] / now.scale;
+        const py = origin[1] + path[at + 1] / now.scale;
+        const pz = origin[2] + path[at + 2] / now.scale;
+        const x = px * right[0] + py * right[1] + pz * right[2];
+        const y = px * up[0] + py * up[1] + pz * up[2];
+        shown[cursor++] = px;
+        shown[cursor++] = py;
+        shown[cursor++] = pz;
         left = Math.min(left, x);
         rightmost = Math.max(rightmost, x);
         bottom = Math.min(bottom, y);
         top = Math.max(top, y);
       }
-    });
+    }
     const { innerWidth: width, innerHeight: height } = window;
     const room = panelRoom();
     const usableX = Math.max(160, width - room.right - 48) / 2;
@@ -1043,7 +1072,7 @@ export function OrbitView({
     const half = frameHalf(width, height);
     const focal = focalLength(height);
     const limit = track.helio ? HELIO_ZOOM_MAX : ZOOM_RANGE[1];
-    const { toward } = basis(from.elevation, from.azimuth);
+    const { toward } = basis(from.elevation, from.azimuth, from.roll);
     // First guess from the extent across the screen plane, then a few
     // rounds through the real perspective: project every point, rescale
     // and recentre on what the camera would actually show. A path running
@@ -1063,23 +1092,17 @@ export function OrbitView({
       const eye = aim.map((value, axis) => value + toward[axis] * distance);
       let [minX, maxX, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity];
       let behind = false;
-      for (const p of shown) {
-        const rel = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
-        const z = -(
-          rel[0] * toward[0] +
-          rel[1] * toward[1] +
-          rel[2] * toward[2]
-        );
+      for (let at = 0; at < shown.length; at += 3) {
+        const dx = shown[at] - eye[0];
+        const dy = shown[at + 1] - eye[1];
+        const dz = shown[at + 2] - eye[2];
+        const z = -(dx * toward[0] + dy * toward[1] + dz * toward[2]);
         if (z < distance * 0.05) {
           behind = true;
           break;
         }
-        const x =
-          ((rel[0] * right[0] + rel[1] * right[1] + rel[2] * right[2]) *
-            focal) /
-          z;
-        const y =
-          ((rel[0] * up[0] + rel[1] * up[1] + rel[2] * up[2]) * focal) / z;
+        const x = ((dx * right[0] + dy * right[1] + dz * right[2]) * focal) / z;
+        const y = ((dx * up[0] + dy * up[1] + dz * up[2]) * focal) / z;
         minX = Math.min(minX, x);
         maxX = Math.max(maxX, x);
         minY = Math.min(minY, y);
@@ -1191,7 +1214,8 @@ export function OrbitView({
     zoom: number | 'fit',
     from: Pose,
   ): Pose => {
-    const framed = zoom === 'fit' ? frameShot(from) : null;
+    const upright = { ...from, roll: 0 };
+    const framed = zoom === 'fit' ? frameShot(upright) : null;
     const width = framed?.zoom ?? (zoom as number);
     const { right, up } = basis(from.elevation, from.azimuth);
     const room = panelRoom();
@@ -1202,7 +1226,7 @@ export function OrbitView({
         (right[axis] * room.right - up[axis] * room.bottom) * 0.5 * perPx,
     );
     return {
-      ...from,
+      ...upright,
       leo: 0,
       gnss: 0,
       trails: 0,
@@ -1272,10 +1296,12 @@ export function OrbitView({
     };
   };
   const startMission = (next: Mission, at?: number, linkedFrame?: string) => {
+    const request = ++missionRequest.current;
     setMissionLoading(next.id);
     setMissionFailed(false);
     loadMissionTrack(next.id).then(
       (track) => {
+        if (request !== missionRequest.current) return;
         setMissionLoading(null);
         select(null);
         closeLearn();
@@ -1322,6 +1348,7 @@ export function OrbitView({
         // close up); the first phase's shot then glides in from there.
         intro.current.done = true;
         spin.current = { azimuth: 0, elevation: 0, at: 0 };
+        wheelZoom.current = null;
         const square = { ...POSES.overview, ...planeView(track, first) };
         tween.current = still(
           track.helio && auto
@@ -1331,12 +1358,15 @@ export function OrbitView({
         invalidate.current();
       },
       () => {
+        if (request !== missionRequest.current) return;
         setMissionLoading(null);
         setMissionFailed(true);
       },
     );
   };
   const exitMission = () => {
+    missionRequest.current++;
+    setMissionLoading(null);
     missionRef.current = null;
     setMission(null);
     bounds.current = { min: anchor - SPAN, max: anchor + SPAN };
@@ -1351,26 +1381,56 @@ export function OrbitView({
     if (!state || next === state.frame) return;
     const time = simTime();
     const pose = holdPose();
-    const before = state.track.basis(state.frame, time).axes;
     const after = state.track.basis(next, time).axes;
-    const local = basis(pose.elevation, pose.azimuth).toward;
-    const world = [0, 1, 2].map(
-      (i) =>
-        local[0] * before[0][i] +
-        local[1] * before[1][i] +
-        local[2] * before[2][i],
-    );
-    const [x, y, z] = after.map(
-      (axis) => axis[0] * world[0] + axis[1] * world[1] + axis[2] * world[2],
-    );
-    pose.elevation = Math.max(
-      -ELEVATION_LIMIT,
-      Math.min(ELEVATION_LIMIT, Math.asin(Math.max(-1, Math.min(1, z)))),
-    );
-    pose.azimuth = Math.atan2(y, x);
+    const camera = sceneRef.current?.camera();
+    if (camera) {
+      const { target, ...orientation } = reframeCamera(camera, after);
+      Object.assign(pose, orientation);
+      const body = [0, 0, 0];
+      const lead = [0, 0, 0];
+      state.track.body(state.track.helio ? state.focus : 'moon', time, body);
+      state.track.craft.some((track) => track.at(time, lead));
+      const offset = after.map(
+        (axis, index) =>
+          target[index] -
+          axis.reduce(
+            (sum, value, i) =>
+              sum + value * (body[i] * pose.aimBody + lead[i] * pose.aimCraft),
+            0,
+          ),
+      );
+      [pose.aimX, pose.aimY, pose.aimZ] = offset;
+    }
     state.frame = next;
     setFrame(next);
-    invalidate.current();
+    // Ease the new frame's vertical direction into place instead of rolling
+    // the whole image in the click's first frame.
+    tween.current = still(pose);
+    tweenTo({ ...pose, roll: 0 }, 900);
+  };
+  /** Changing the body followed by a shot must not move its starting aim. */
+  const changeBody = (next: string) => {
+    const state = missionRef.current;
+    if (!state || next === state.focus) return;
+    const pose = holdPose();
+    const time = simTime();
+    const before = [0, 0, 0];
+    const after = [0, 0, 0];
+    state.track.body(state.focus, time, before);
+    state.track.body(next, time, after);
+    const axes = state.track.basis(state.frame, time).axes;
+    const offset = axes.map(
+      (axis) =>
+        axis.reduce(
+          (sum, value, i) => sum + value * (before[i] - after[i]),
+          0,
+        ) * pose.aimBody,
+    );
+    pose.aimX += offset[0];
+    pose.aimY += offset[1];
+    pose.aimZ += offset[2];
+    state.focus = next;
+    setFocusBody(next);
   };
   const chooseShot = (aim: Shot['aim']) => {
     const state = missionRef.current;
@@ -1380,8 +1440,7 @@ export function OrbitView({
     if (aim === 'body') {
       // The body nearest the spacecraft now, or the phase's own.
       const step = state.mission.phases[Math.max(0, state.phase)];
-      state.focus = focusBody(state.track.helio ? undefined : step?.shot.body);
-      setFocusBody(state.focus);
+      changeBody(focusBody(state.track.helio ? undefined : step?.shot.body));
     }
     tweenTo(
       shotPose(aim, aim === 'path' ? 'fit' : shotZoom(aim), holdPose()),
@@ -1426,6 +1485,7 @@ export function OrbitView({
       Math.PI;
     const span = Math.abs(Math.log(target.zoom / current.zoom));
     spin.current = { azimuth: 0, elevation: 0, at: 0 };
+    wheelZoom.current = null;
     tween.current = {
       from: current,
       to: target,
@@ -1462,6 +1522,7 @@ export function OrbitView({
     });
     spin.current = { azimuth: 0, elevation: 0, at: performance.now() };
     pinch.current = null;
+    wheelZoom.current = null;
     intro.current.done = true;
   };
   const moveStage = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1679,6 +1740,8 @@ export function OrbitView({
       weights[id as LayerId] = on ? 1 : 0;
     let previous = performance.now();
     let focusWeight = 0;
+    let inset = insetRight.current;
+    let reveal = intro.current.done ? 1 : 0;
     let settlingFocus = false;
     // Bloom is dropped if the first frames are slow.
     const frameTimes: number[] = [];
@@ -1799,8 +1862,14 @@ export function OrbitView({
             ? 1
             : 0
           : Math.min(1, (now - opening.start) / INTRO_MS);
-      const introAt = opening.done ? 1 : progress;
       if (progress >= 1) opening.done = true;
+      // Cancelling the opening by clicking should reveal its remaining
+      // layers gently, rather than setting every opacity to one at once.
+      const introAt = opening.done
+        ? (reveal +=
+            (1 - reveal) * (reduced.matches ? 1 : 1 - Math.exp(-dt / 100)))
+        : (reveal = progress);
+      if (reveal > 0.998) reveal = 1;
 
       // Spin left over from a camera drag.
       const turn = spin.current;
@@ -1811,6 +1880,20 @@ export function OrbitView({
         turn.elevation *= decay;
         if (Math.abs(turn.azimuth) + Math.abs(turn.elevation) < 2e-6)
           spin.current = { azimuth: 0, elevation: 0, at: 0 };
+      }
+
+      const wantedZoom = wheelZoom.current;
+      if (wantedZoom !== null) {
+        const pose = poseAt(tween.current, now);
+        const delta = Math.log(wantedZoom / pose.zoom);
+        pose.zoom *= Math.exp(
+          delta * (reduced.matches ? 1 : 1 - Math.exp(-dt / 65)),
+        );
+        if (Math.abs(delta) < 0.0005) {
+          pose.zoom = wantedZoom;
+          wheelZoom.current = null;
+        }
+        tween.current = still(pose);
       }
 
       const coast = glide.current;
@@ -1839,11 +1922,15 @@ export function OrbitView({
 
       // Layer weights: a fifth of a second to fade.
       const blend = reduced.matches ? 1 : 1 - Math.exp(-dt / 180);
+      inset += (insetRight.current - inset) * blend;
+      if (Math.abs(insetRight.current - inset) < 0.1)
+        inset = insetRight.current;
       focusWeight += (focusTarget.current - focusWeight) * blend;
       if (Math.abs(focusTarget.current - focusWeight) < 0.002)
         focusWeight = focusTarget.current;
       else settlingFocus = true;
-      let settling = settlingFocus;
+      let settling =
+        settlingFocus || inset !== insetRight.current || reveal < 1;
       settlingFocus = false;
       for (const [id, on] of Object.entries(layersRef.current)) {
         const key = id as LayerId;
@@ -1872,9 +1959,9 @@ export function OrbitView({
             changeFrame(step.frame ?? active.frames[0]);
             setShot(step.shot.aim);
             if (step.shot.aim === 'body') {
-              replay.focus =
-                step.shot.body ?? (track.helio ? replay.focus : 'moon');
-              setFocusBody(replay.focus);
+              changeBody(
+                step.shot.body ?? (track.helio ? replay.focus : 'moon'),
+              );
             }
             tweenTo(
               shotPose(
@@ -1945,7 +2032,7 @@ export function OrbitView({
         bloom: weights.bloom * 0.9,
         selected: live ? selection.current : null,
         hovered: live ? hovered.current : null,
-        insetRight: insetRight.current,
+        insetRight: inset,
         focus: live ? focusWeight : 0,
         example: live ? example.current : null,
         mission: missionView,
@@ -1956,7 +2043,7 @@ export function OrbitView({
       // positions it has just drawn.
       const point = hover.current;
       const index =
-        scene && point && pointers.current.size === 0
+        !missionView && scene && point && pointers.current.size === 0
           ? scene.pick(point.x, point.y)
           : -1;
       const label =
@@ -1969,7 +2056,13 @@ export function OrbitView({
         box.dataset.hover = index >= 0 ? 'satellite' : '';
         loop.invalidate();
       }
-      if (settling || !opening.done || turn.azimuth || turn.elevation)
+      if (
+        settling ||
+        !opening.done ||
+        turn.azimuth ||
+        turn.elevation ||
+        wheelZoom.current !== null
+      )
         loop.invalidate();
 
       // Watch the first two seconds of frames: if they average under ~40
@@ -1989,12 +2082,16 @@ export function OrbitView({
         }
       }
 
-      if (readout.current && document.activeElement !== readout.current)
-        readout.current.value = `${utc(time)} UTC`;
-      if (scrub.current && document.activeElement !== scrub.current)
-        scrub.current.value = String(
+      if (readout.current && document.activeElement !== readout.current) {
+        const value = `${utc(time)} UTC`;
+        if (readout.current.value !== value) readout.current.value = value;
+      }
+      if (scrub.current && document.activeElement !== scrub.current) {
+        const value = String(
           Math.round((time - (replay?.track.start ?? anchor)) / 1000),
         );
+        if (scrub.current.value !== value) scrub.current.value = value;
+      }
       if (replay && missionView) {
         drawMissionTape(rulerContext, {
           ...rulerSize,
@@ -2038,13 +2135,20 @@ export function OrbitView({
       // Layout sizes, not getBoundingClientRect, so a transform on the stage
       // can never shrink the canvas.
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      rulerSize = {
+      const nextSize = {
         width: Math.max(1, ruler.clientWidth),
         height: Math.max(1, ruler.clientHeight),
         dpr,
       };
-      ruler.width = Math.round(rulerSize.width * dpr);
-      ruler.height = Math.round(rulerSize.height * dpr);
+      if (
+        rulerSize.width !== nextSize.width ||
+        rulerSize.height !== nextSize.height ||
+        rulerSize.dpr !== dpr
+      ) {
+        rulerSize = nextSize;
+        ruler.width = Math.round(rulerSize.width * dpr);
+        ruler.height = Math.round(rulerSize.height * dpr);
+      }
       sceneRef.current?.resize(
         Math.max(1, box.clientWidth),
         Math.max(1, box.clientHeight),
@@ -2109,13 +2213,14 @@ export function OrbitView({
     // The floating dock's height, for the panels that must stop above it.
     const measureDock = () => {
       const bar = dock.current;
-      bar?.parentElement?.style.setProperty(
-        '--dock-h',
-        `${bar.offsetHeight}px`,
-      );
+      const style = bar?.parentElement?.style;
+      const value = `${bar?.offsetHeight ?? 0}px`;
+      if (style && style.getPropertyValue('--dock-h') !== value)
+        style.setProperty('--dock-h', value);
     };
-    const observer = new ResizeObserver(() => {
-      resize();
+    const observer = new ResizeObserver((entries) => {
+      if (entries.some(({ target }) => target === box || target === ruler))
+        resize();
       measureSide();
       measureDock();
     });
@@ -2169,7 +2274,7 @@ export function OrbitView({
       event.preventDefault();
       const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
       intro.current.done = true;
-      zoomBy(Math.exp(delta * (event.ctrlKey ? 0.01 : 0.0015)));
+      zoomBy(Math.exp(delta * (event.ctrlKey ? 0.01 : 0.0015)), true);
     };
     ruler.addEventListener('wheel', tapeWheel, { passive: false });
     box.addEventListener('wheel', stageWheel, { passive: false });

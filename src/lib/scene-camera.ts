@@ -37,7 +37,7 @@ export const focalLength = (height: number) => height / 2 / TAN_HALF;
 
 /** The camera orientation for a latitude `elevation` and an absolute
  * longitude `phi` of the viewing direction. */
-export function basis(elevation: number, phi: number) {
+export function basis(elevation: number, phi: number, roll = 0) {
   const toward: Vec3 = [
     Math.cos(elevation) * Math.cos(phi),
     Math.cos(elevation) * Math.sin(phi),
@@ -49,7 +49,37 @@ export function basis(elevation: number, phi: number) {
     toward[2] * right[0] - toward[0] * right[2],
     toward[0] * right[1] - toward[1] * right[0],
   ];
-  return { toward, right, up };
+  if (!roll) return { toward, right, up };
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  return {
+    toward,
+    right: right.map((value, axis) => value * c + up[axis] * s) as Vec3,
+    up: up.map((value, axis) => value * c - right[axis] * s) as Vec3,
+  };
+}
+
+/** Re-express the displayed camera in a new reference frame, preserving
+ * its position, aim and screen orientation (including roll). */
+export function reframeCamera(
+  camera: Camera,
+  axes: readonly (readonly number[])[],
+) {
+  const toward = axes.map((axis) => dot(axis, camera.toward));
+  const right = axes.map((axis) => dot(axis, camera.right));
+  const elevation = Math.asin(Math.max(-1, Math.min(1, toward[2])));
+  const azimuth = Math.atan2(toward[1], toward[0]);
+  const local = basis(elevation, azimuth);
+  const target = camera.position.map(
+    (value, axis) => value - camera.toward[axis] * camera.distance,
+  );
+  return {
+    zoom: camera.zoom,
+    elevation,
+    azimuth,
+    roll: Math.atan2(dot(right, local.up), dot(right, local.right)),
+    target: axes.map((axis) => dot(axis, target)),
+  };
 }
 
 export function makeCamera(
