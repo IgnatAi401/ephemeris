@@ -67,6 +67,8 @@ import { LayerPanel } from '@/components/layer-panel';
 import { ShortcutHelp } from '@/components/shortcut-help';
 import { SearchBox } from '@/components/search-box';
 import { InfoCard } from '@/components/info-card';
+import { SpacecraftInfoCard } from '@/components/spacecraft-info-card';
+import { LUNAR_ORBITERS, type SpacecraftKey } from '@/lib/ephemeris';
 import { PassPanel } from '@/components/pass-panel';
 import { loadCatalog, type Catalog, type CatalogEntry } from '@/lib/catalog';
 import { precise, type Precise } from '@/lib/precise';
@@ -101,6 +103,8 @@ type Pose = Omit<
   | 'spill'
   | 'bloom'
   | 'selected'
+  | 'selectedSpacecraft'
+  | 'hoveredSpacecraft'
   | 'hovered'
   | 'insetRight'
   | 'focus'
@@ -561,6 +565,10 @@ export function OrbitView({
   );
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [selected, setSelected] = useState<CatalogEntry | null>(null);
+  const [selectedSpacecraft, setSelectedSpacecraft] =
+    useState<SpacecraftKey | null>(null);
+  const selectedSpacecraftRef = useRef<SpacecraftKey | null>(null);
+  const hoveredSpacecraft = useRef<SpacecraftKey | null>(null);
   const [model, setModel] = useState<Precise | null>(null);
   const [passesOpen, setPassesOpen] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
@@ -585,6 +593,7 @@ export function OrbitView({
   const insetRight = useRef(0);
   const catalogRef = useRef<Catalog | null>(null);
   const catalogPending = useRef<Promise<Catalog | null> | null>(null);
+  const catalogRequested = useRef(false);
   const fleetRef = useRef<Fleet | null>(fleet);
   // --- Learn panel ----------------------------------------------------------
   const [learnOpen, setLearnOpen] = useState(false);
@@ -666,6 +675,7 @@ export function OrbitView({
 
   /** Fetch catalog.json once, the first time anything needs a name. */
   const ensureCatalog = () => {
+    catalogRequested.current = true;
     const current = fleetRef.current;
     if (!current) return Promise.resolve(null);
     if (catalogRef.current) return Promise.resolve(catalogRef.current);
@@ -685,6 +695,9 @@ export function OrbitView({
     return pending;
   };
   const select = (entry: CatalogEntry | null) => {
+    invalidate.current();
+    selectedSpacecraftRef.current = null;
+    setSelectedSpacecraft(null);
     selectedRef.current = entry;
     setSelected(entry);
     setModel(null);
@@ -696,6 +709,15 @@ export function OrbitView({
       },
       () => {},
     );
+  };
+  const selectSpacecraft = (key: SpacecraftKey, reframe = true) => {
+    select(null);
+    selectedSpacecraftRef.current = key;
+    setSelectedSpacecraft(key);
+    setPassesOpen(false);
+    if (reframe)
+      go(LUNAR_ORBITERS.some((item) => item.key === key) ? 'moon' : 'deep');
+    invalidate.current();
   };
   // What the scene draws for the selection: SGP4 once loaded, the fast
   // propagator until then.
@@ -863,6 +885,7 @@ export function OrbitView({
       },
       focus,
       norad: selected?.norad ?? null,
+      spacecraft: selectedSpacecraft,
       layers,
       defaults,
       mission: missionRef.current && {
@@ -1579,12 +1602,16 @@ export function OrbitView({
       performance.now() - down.at < 500
     ) {
       const box = event.currentTarget.getBoundingClientRect();
-      const index =
-        sceneRef.current?.pick(
-          event.clientX - box.left,
-          event.clientY - box.top,
-          event.pointerType === 'mouse' ? 14 : 26,
-        ) ?? -1;
+      const x = event.clientX - box.left;
+      const y = event.clientY - box.top;
+      const radius = event.pointerType === 'mouse' ? 14 : 26;
+      const spacecraft = sceneRef.current?.pickSpacecraft(x, y, radius);
+      if (spacecraft && !missionRef.current) {
+        selectSpacecraft(spacecraft, false);
+        spin.current = { azimuth: 0, elevation: 0, at: 0 };
+        return;
+      }
+      const index = sceneRef.current?.pick(x, y, radius) ?? -1;
       if (index < 0) {
         if (!down.editing) setChromeHidden((hidden) => !hidden);
       } else
@@ -1708,7 +1735,8 @@ export function OrbitView({
         if (learnOpen) closeLearn();
         else if (missionsOpen && !missionRef.current) setMissionsOpen(false);
         else if (passesOpen) setPassesOpen(false);
-        else if (selectedRef.current) select(null);
+        else if (selectedRef.current || selectedSpacecraftRef.current)
+          select(null);
         else return;
       } else return;
       event.preventDefault();
@@ -2031,6 +2059,8 @@ export function OrbitView({
         spill: live ? weights.spill * ramp(introAt, 0.85, 1) : 0,
         bloom: weights.bloom * 0.9,
         selected: live ? selection.current : null,
+        selectedSpacecraft: live ? selectedSpacecraftRef.current : null,
+        hoveredSpacecraft: live ? hoveredSpacecraft.current : null,
         hovered: live ? hovered.current : null,
         insetRight: inset,
         focus: live ? focusWeight : 0,
@@ -2042,18 +2072,28 @@ export function OrbitView({
       // What is under the mouse, for the next frame: the scene picks from the
       // positions it has just drawn.
       const point = hover.current;
-      const index =
+      const craftKey =
         !missionView && scene && point && pointers.current.size === 0
+          ? scene.pickSpacecraft(point.x, point.y)
+          : null;
+      const index =
+        !craftKey &&
+        !missionView &&
+        scene &&
+        point &&
+        pointers.current.size === 0
           ? scene.pick(point.x, point.y)
           : -1;
       const label =
         index >= 0 ? (catalogRef.current?.entries[index]?.name ?? '') : '';
       if (
         index !== (hovered.current?.index ?? -1) ||
+        craftKey !== hoveredSpacecraft.current ||
         label !== (hovered.current?.label ?? '')
       ) {
         hovered.current = index >= 0 ? { index, label } : null;
-        box.dataset.hover = index >= 0 ? 'satellite' : '';
+        hoveredSpacecraft.current = craftKey;
+        box.dataset.hover = index >= 0 || craftKey ? 'satellite' : '';
         loop.invalidate();
       }
       if (
@@ -2178,8 +2218,12 @@ export function OrbitView({
       rebuilt();
       fleetRef.current = next.fleet;
       setFleet(next.fleet);
+      // Search may have been focused while the orbital data was still loading.
+      if (catalogRequested.current) void ensureCatalog();
       // A linked satellite is selected once the catalogue is in.
-      if (shared.norad)
+      if (shared.spacecraft && !shared.mission)
+        selectSpacecraft(shared.spacecraft, false);
+      else if (shared.norad)
         void ensureCatalog().then((loaded) => {
           const entry = loaded?.byNorad.get(shared.norad ?? 0);
           if (entry) select(entry);
@@ -2391,6 +2435,7 @@ export function OrbitView({
               catalog={catalog}
               onOpen={() => void ensureCatalog()}
               onPick={select}
+              onPickSpacecraft={(key) => selectSpacecraft(key)}
             />
           )}
           {selected && fleet && (
@@ -2402,6 +2447,22 @@ export function OrbitView({
               simTime={simTime}
               onClose={() => select(null)}
               onPasses={() => setPassesOpen(true)}
+            />
+          )}
+          {selectedSpacecraft && !mission && (
+            <SpacecraftInfoCard
+              lang={lang}
+              spacecraft={selectedSpacecraft}
+              simTime={simTime}
+              readState={(time) =>
+                sceneRef.current?.spacecraftState(selectedSpacecraft, time) ??
+                null
+              }
+              onClose={() => select(null)}
+              onReplay={() => {
+                const replay = missionById('jwst');
+                if (replay) startMission(replay);
+              }}
             />
           )}
           {passesOpen && fleet && (

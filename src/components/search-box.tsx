@@ -9,6 +9,15 @@ import { Search } from 'lucide-react';
 import type { Catalog, CatalogEntry } from '@/lib/catalog';
 import type { Language } from '@/lib/i18n';
 import { CONSTELLATIONS } from '@/lib/orbits';
+import {
+  SPACECRAFT,
+  SPACECRAFT_ALIASES,
+  type SpacecraftKey,
+} from '@/lib/ephemeris';
+
+type SearchResult =
+  | { entry: CatalogEntry }
+  | { spacecraft: (typeof SPACECRAFT)[number] };
 
 /** Find a satellite by name or NORAD number. The catalogue is fetched the
  * first time the box is used. "/" focuses it from anywhere. */
@@ -17,22 +26,34 @@ export function SearchBox({
   catalog,
   onOpen,
   onPick,
+  onPickSpacecraft,
 }: {
   lang: Language;
   catalog: Catalog | null;
   /** Called on first focus, to start loading the catalogue. */
   onOpen: () => void;
   onPick: (entry: CatalogEntry) => void;
+  onPickSpacecraft: (key: SpacecraftKey) => void;
 }) {
   const t = (en: string, zh: string) => (lang === 'en' ? en : zh);
   const input = useRef<HTMLInputElement>(null);
+  const blurTimer = useRef<number | null>(null);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
-  const results = useMemo(
-    () => (catalog && query ? catalog.search(query, 10) : []),
-    [catalog, query],
-  );
+  const results = useMemo<SearchResult[]>(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const craft = SPACECRAFT.filter((item) =>
+      `${item.key} ${item.en} ${item.zh} ${SPACECRAFT_ALIASES[item.key]}`
+        .toLowerCase()
+        .includes(q),
+    );
+    return [
+      ...craft.map((spacecraft) => ({ spacecraft })),
+      ...(catalog?.search(q, 10) ?? []).map((entry) => ({ entry })),
+    ].slice(0, 10);
+  }, [catalog, query]);
 
   useEffect(() => {
     const focus = (event: KeyboardEvent) => {
@@ -43,11 +64,15 @@ export function SearchBox({
       input.current?.focus();
     };
     window.addEventListener('keydown', focus);
-    return () => window.removeEventListener('keydown', focus);
+    return () => {
+      window.removeEventListener('keydown', focus);
+      if (blurTimer.current !== null) window.clearTimeout(blurTimer.current);
+    };
   }, []);
 
-  const pick = (entry: CatalogEntry) => {
-    onPick(entry);
+  const pick = (result: SearchResult) => {
+    if ('entry' in result) onPick(result.entry);
+    else onPickSpacecraft(result.spacecraft.key);
     setQuery('');
     setOpen(false);
     input.current?.blur();
@@ -64,19 +89,23 @@ export function SearchBox({
         type="search"
         aria-controls="orbit-search-results"
         aria-label={t(
-          'Search satellites by name or NORAD number',
-          '按名称或 NORAD 编号搜索卫星',
+          'Search satellites and spacecraft by name or NORAD number',
+          '按名称或 NORAD 编号搜索卫星与航天器',
         )}
         placeholder={t(
-          'Search satellite or NORAD no.',
-          '搜索卫星名称或 NORAD 编号',
+          'Satellite, spacecraft or NORAD no.',
+          '搜索卫星、航天器或 NORAD 编号',
         )}
         value={query}
         onFocus={() => {
+          if (blurTimer.current !== null)
+            window.clearTimeout(blurTimer.current);
           onOpen();
           setOpen(true);
         }}
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        onBlur={() => {
+          blurTimer.current = window.setTimeout(() => setOpen(false), 150);
+        }}
         onChange={(event) => {
           setQuery(event.currentTarget.value);
           setActive(0);
@@ -84,7 +113,9 @@ export function SearchBox({
         }}
         onKeyDown={(event) => {
           if (event.key === 'ArrowDown')
-            setActive((at) => Math.min(results.length - 1, at + 1));
+            setActive((at) =>
+              Math.min(Math.max(0, results.length - 1), at + 1),
+            );
           else if (event.key === 'ArrowUp')
             setActive((at) => Math.max(0, at - 1));
           else if (event.key === 'Enter' && results[active])
@@ -106,26 +137,33 @@ export function SearchBox({
           )}
           {catalog && results.length === 0 && (
             <li className="orbit-search-note">
-              {t('No match', '没有匹配的卫星')}
+              {t('No match', '没有匹配的目标')}
             </li>
           )}
-          {results.map((entry, at) => {
-            const group = CONSTELLATIONS[entry.group];
+          {results.map((result, at) => {
+            const entry = 'entry' in result ? result.entry : null;
+            const craft = 'spacecraft' in result ? result.spacecraft : null;
+            const group = entry ? CONSTELLATIONS[entry.group] : null;
+            const name = entry?.name ?? craft![lang];
             return (
-              <li key={entry.norad}>
+              <li key={entry?.norad ?? craft!.key}>
                 <button
                   type="button"
                   data-active={at === active || undefined}
-                  style={{ '--dot': group.color } as CSSProperties}
+                  style={
+                    { '--dot': group?.color ?? craft!.color } as CSSProperties
+                  }
                   // Before the input's blur closes the list.
                   onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => pick(entry)}
+                  onClick={() => pick(result)}
                   onPointerEnter={() => setActive(at)}
                 >
                   <i aria-hidden="true" />
-                  <span>{entry.name}</span>
+                  <span>{name}</span>
                   <small>
-                    {entry.norad} · {t(group.en, group.zh)}
+                    {entry && group
+                      ? `${entry.norad} · ${t(group.en, group.zh)}`
+                      : t('Spacecraft', '航天器')}
                   </small>
                 </button>
               </li>

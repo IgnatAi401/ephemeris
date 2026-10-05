@@ -4,6 +4,7 @@ import type { CatalogEntry } from '@/lib/catalog';
 import type { Language } from '@/lib/i18n';
 import { CONSTELLATIONS, EARTH_RADIUS_KM, type Fleet } from '@/lib/orbits';
 import type { Precise } from '@/lib/precise';
+import { ObjectDescription } from '@/components/object-description';
 
 const MU = 398600.4418;
 
@@ -90,20 +91,26 @@ export function InfoCard({
           <X size={15} />
         </button>
       </header>
-      <dl>
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="orbit-card-note">
-        {t(
-          'Position, orbit and ground track from SGP4; the dots for the whole sky use a faster approximation.',
-          '位置、轨道线和星下点轨迹由 SGP4 精确推算；满天的光点用的是更快的近似算法。',
-        )}
-      </p>
+      <ObjectDescription lang={lang} entry={entry} />
+      <details className="orbit-card-details">
+        <summary>
+          {t('Orbit readouts and identifiers', '轨道读数与编号')}
+        </summary>
+        <dl>
+          {rows.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="orbit-card-note">
+          {t(
+            'Position, orbit and ground track from SGP4; the dots for the whole sky use a faster approximation.',
+            '位置、轨道线和星下点轨迹由 SGP4 精确推算；满天的光点用的是更快的近似算法。',
+          )}
+        </p>
+      </details>
       <button type="button" className="orbit-card-action" onClick={onPasses}>
         <Telescope size={14} aria-hidden="true" />
         {t('Visible passes', '可见过境预报')}

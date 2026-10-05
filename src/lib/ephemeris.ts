@@ -24,6 +24,18 @@ export const LUNAR_ORBITERS = [
   { key: 'danuri', en: 'Danuri', zh: 'Danuri', color: '#8ff0c8' },
 ] as const;
 
+export const SPACECRAFT = [...DEEP_SPACECRAFT, ...LUNAR_ORBITERS] as const;
+export type SpacecraftKey = (typeof SPACECRAFT)[number]['key'];
+export const SPACECRAFT_ALIASES: Record<SpacecraftKey, string> = {
+  soho: 'solar heliospheric observatory 太阳 日球层',
+  jwst: 'james webb 詹姆斯 韦伯',
+  euclid: '欧几里得',
+  lro: 'lunar reconnaissance orbiter 月球 勘测',
+  danuri: 'kplo korea pathfinder lunar orbiter 韩国 月球 丹努里',
+};
+export const spacecraftByKey = (key: string) =>
+  SPACECRAFT.find((item) => item.key === key) ?? null;
+
 /** Geocentric position (km, mean equator of date) at `time`, by cubic
  * Hermite interpolation of the 6-hourly state vectors; false outside the
  * snapshot. */

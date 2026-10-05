@@ -2,16 +2,19 @@
 //   #t=2026-10-04T08:30:00Z&cam=62.0,22.0,3.70&f=moon&sel=25544&layers=-debris,+bloom
 // t: the simulation instant; cam: camera azimuth and elevation (degrees) and
 // zoom; f: the scale preset; sel: the selected satellite's NORAD number;
+// sc: a selected deep-space or lunar spacecraft key;
 // layers: switches that differ from the defaults; m and fr: a mission replay
 // (lib/missions.ts) and its reference frame. Every field is optional, and
 // anything unreadable is ignored.
 import type { LayerId, Layers } from '@/lib/layers';
+import { spacecraftByKey, type SpacecraftKey } from './ephemeris.ts';
 
 export type Shared = {
   time?: number;
   camera?: { azimuth: number; elevation: number; zoom: number };
   focus?: string;
   norad?: number;
+  spacecraft?: SpacecraftKey;
   layers?: Partial<Layers>;
   mission?: string;
   frame?: string;
@@ -35,6 +38,8 @@ export function readHash(hash: string, known: readonly LayerId[]): Shared {
   if (focus) shared.focus = focus;
   const norad = Number(params.get('sel'));
   if (Number.isInteger(norad) && norad > 0) shared.norad = norad;
+  const spacecraft = spacecraftByKey(params.get('sc') ?? '');
+  if (spacecraft) shared.spacecraft = spacecraft.key;
   const layers: Partial<Layers> = {};
   for (const item of (params.get('layers') ?? '').split(',')) {
     const id = item.slice(1) as LayerId;
@@ -54,6 +59,7 @@ export function writeHash(state: {
   camera: { azimuth: number; elevation: number; zoom: number };
   focus: string;
   norad: number | null;
+  spacecraft?: SpacecraftKey | null;
   layers: Layers;
   defaults: Layers;
   mission?: { id: string; frame: string } | null;
@@ -64,7 +70,8 @@ export function writeHash(state: {
     `cam=${azimuth.toFixed(1)},${(state.camera.elevation / DEG).toFixed(1)},${state.camera.zoom.toPrecision(3)}`,
   ];
   if (state.focus !== 'overview') parts.push(`f=${state.focus}`);
-  if (state.norad) parts.push(`sel=${state.norad}`);
+  if (state.spacecraft) parts.push(`sc=${state.spacecraft}`);
+  else if (state.norad) parts.push(`sel=${state.norad}`);
   const changed = (Object.keys(state.layers) as LayerId[])
     .filter((id) => state.layers[id] !== state.defaults[id])
     .map((id) => `${state.layers[id] ? '+' : '-'}${id}`);

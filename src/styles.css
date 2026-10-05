@@ -770,6 +770,87 @@ body {
 .orbit-passes-where button:hover {
   background: rgba(var(--glow-rgb), 0.24);
 }
+.orbit-profile-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 8px;
+}
+.orbit-profile-heading strong {
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 500;
+}
+.orbit-profile-heading > span {
+  color: var(--text-3);
+  font-size: 10px;
+}
+.orbit-profile-mission {
+  margin: 5px 0;
+  color: var(--text-1);
+  font-size: 11px;
+}
+.orbit-profile-summary {
+  margin: 7px 0 12px;
+  line-height: 1.8;
+}
+.orbit-card .orbit-profile-facts {
+  gap: 6px;
+}
+.orbit-card .orbit-profile-facts dt {
+  flex: 0 0 auto;
+}
+.orbit-card .orbit-profile-facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 11px;
+}
+.orbit-profile-note,
+.orbit-profile-loading {
+  display: block;
+  margin: 8px 0;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.orbit-profile-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 10px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.orbit-profile-sources > span {
+  color: var(--text-3);
+}
+.orbit-profile-sources a {
+  color: var(--text-2);
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+.orbit-profile-sources a:hover {
+  color: var(--text-1);
+}
+.orbit-profile-sources a:focus-visible,
+.orbit-card-details summary:focus-visible {
+  outline: 1px solid rgba(var(--glow-highlight-rgb), 0.7);
+  outline-offset: 3px;
+}
+.orbit-card-details {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.orbit-card-details summary {
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.orbit-card-details[open] summary {
+  margin-bottom: 10px;
+}
 .orbit-passes-where {
   display: flex;
   flex-wrap: wrap;
