@@ -28,6 +28,7 @@ import {
   lunarAt,
   lunarPeriod,
   vectorAt,
+  type SpacecraftKey,
   type SpacecraftSnapshot,
 } from '@/lib/ephemeris';
 import { orbitPoint, trueAnomaly, type Elements } from '@/lib/kepler';
@@ -120,6 +121,9 @@ export type SceneView = {
   bloom: number;
   /** The satellite picked in the info card, drawn from SGP4. */
   selected?: Selection | null;
+  /** The authored information card's deep-space or lunar spacecraft. */
+  selectedSpacecraft?: SpacecraftKey | null;
+  hoveredSpacecraft?: SpacecraftKey | null;
   /** The satellite under the pointer. */
   hovered?: { index: number; label: string } | null;
   /** CSS px on the right covered by panels; the lunar close-up moves left. */
@@ -511,6 +515,14 @@ export function createOrbitScene(
   });
 
   let craft: SpacecraftSnapshot | null = null;
+  // Pick the actual 2D markers, including the lunar close-up's coordinates.
+  // Rebuilt each frame so hidden, off-screen or expired tracks cannot be picked.
+  const spacecraftSpots: {
+    key: SpacecraftKey;
+    x: number;
+    y: number;
+    label?: { x: number; y: number; width: number; height: number };
+  }[] = [];
   let pointMesh: Mesh | null = null;
   let trailMesh: Mesh | null = null;
   let fleet: Fleet | null = null;
@@ -1067,6 +1079,7 @@ export function createOrbitScene(
   };
 
   const render = (view: SceneView, clock: number, text: SceneText) => {
+    spacecraftSpots.length = 0;
     if (gl.isContextLost()) return;
     if (view.mission?.track.helio) {
       renderHelio(view, text, view.mission);
@@ -1359,6 +1372,12 @@ export function createOrbitScene(
         x + shift,
         Math.min(height - 8, Math.max(14, y)),
       );
+      return {
+        x: start + shift,
+        y: Math.min(height - 8, Math.max(14, y)) - 12,
+        width: span,
+        height: 16,
+      };
     };
     const earthPx = earthR * scale;
     const rgba = (color: string, alpha: number) => {
@@ -1798,6 +1817,33 @@ export function createOrbitScene(
       context.shadowBlur = 0;
     };
 
+    const spacecraftMarker = (
+      key: SpacecraftKey,
+      x: number,
+      y: number,
+      color: string,
+      weight: number,
+      bounds?: { x: number; y: number; width: number; height: number },
+    ) => {
+      if (weight < 0.05 || x < 0 || y < 0 || x > width || y > height) return;
+      spacecraftSpots.push({ key, x, y, label: bounds });
+      if (view.selectedSpacecraft !== key && view.hoveredSpacecraft !== key)
+        return;
+      context.strokeStyle = rgba(color, weight);
+      context.lineWidth = 1.3;
+      context.setLineDash(view.selectedSpacecraft === key ? [] : [2, 2]);
+      context.beginPath();
+      context.arc(
+        x,
+        y,
+        view.selectedSpacecraft === key ? 9 : 7,
+        0,
+        Math.PI * 2,
+      );
+      context.stroke();
+      context.setLineDash([]);
+    };
+
     // Sun–Earth L1 and L2: the Sun line, both points, and the spacecraft
     // stationed there with their last three weeks of halo orbit.
     if (view.deep > 0.01) {
@@ -1860,17 +1906,24 @@ export function createOrbitScene(
           }
           const [cx, cy] = screen(at.map((value) => value / EARTH_RADIUS_KM));
           if (!Number.isFinite(cx + cy)) continue;
+          const position = at.map((value) => value / EARTH_RADIUS_KM);
+          if (
+            hidden(position) ||
+            earthCover(cam, position, MOON_RADIUS, moon) === 1
+          )
+            continue;
           dotAt(cx, cy, 2.6, color, weight);
           const km = Math.round(Math.hypot(at[0], at[1], at[2])).toLocaleString(
             'en-US',
           );
-          label(
+          const bounds = label(
             narrow ? (text.zh ? zh : en) : `${text.zh ? zh : en} · ${km} KM`,
             cx + 8,
             cy - 6,
             weight,
             'left',
           );
+          spacecraftMarker(key, cx, cy, color, weight, bounds);
         }
       }
     }
@@ -2129,7 +2182,13 @@ export function createOrbitScene(
         const head = place(at);
         if (head.hidden) continue;
         dotAt(head.x, head.y, 3, color, lensWeight);
-        label(text.zh ? zh : en, head.x + 6, head.y - 5, 0.9 * lensWeight);
+        const bounds = label(
+          text.zh ? zh : en,
+          head.x + 6,
+          head.y - 5,
+          0.9 * lensWeight,
+        );
+        spacecraftMarker(key, head.x, head.y, color, lensWeight, bounds);
       }
       label(
         text.closeUp,
@@ -2189,6 +2248,45 @@ export function createOrbitScene(
     render,
     /** The camera of the last frame, for picking. */
     camera: () => camera,
+    /** Centre distances (km) from the same snapshot used to draw the marker. */
+    spacecraftState(key: SpacecraftKey, time: number) {
+      if (!craft) return null;
+      const at = [0, 0, 0];
+      const lunar = LUNAR_ORBITERS.some((item) => item.key === key);
+      if (
+        !(lunar
+          ? lunarAt(craft, key, time, at)
+          : vectorAt(craft, key, time, at))
+      )
+        return null;
+      return {
+        distance: Math.hypot(...at),
+        lunar,
+        period: lunar ? lunarPeriod(craft, key, time) : null,
+      };
+    },
+    pickSpacecraft(x: number, y: number, radius = 14): SpacecraftKey | null {
+      let best: SpacecraftKey | null = null;
+      let distance = radius * radius;
+      for (const spot of spacecraftSpots) {
+        const bounds = spot.label;
+        const onLabel =
+          bounds &&
+          x >= bounds.x - 3 &&
+          x <= bounds.x + bounds.width + 3 &&
+          y >= bounds.y - 3 &&
+          y <= bounds.y + bounds.height + 3;
+        const next = Math.min(
+          (spot.x - x) ** 2 + (spot.y - y) ** 2,
+          onLabel ? radius * radius - 0.01 : Infinity,
+        );
+        if (next < distance) {
+          best = spot.key;
+          distance = next;
+        }
+      }
+      return best;
+    },
     /** Teaching mode's satellites (1 = stand out), or null for none. */
     setFocus(mask: Uint8Array | null) {
       const attribute = pointMesh?.geometry.attributes.focus;
