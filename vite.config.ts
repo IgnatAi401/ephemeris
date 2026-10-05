@@ -11,6 +11,9 @@ export default defineConfig({
   base: '/',
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  // satellite.js 7 ships a WASM build whose worker uses top-level await,
+  // which the default iife worker format cannot bundle.
+  worker: { format: 'es' },
   server,
   preview: server,
 });
