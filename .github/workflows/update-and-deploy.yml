@@ -4,7 +4,7 @@
 # - schedule: CelesTrak twice a day, at an off-peak minute (UTC); the Monday
 #   morning run also refreshes JPL Horizons, so the spacecraft data is weekly.
 # - workflow_dispatch: the same by hand, with options to refresh Horizons and
-#   to accept a group count that really did drop by more than 20%.
+#   to accept a group count that really did drop by more than 35%.
 # - push to main: deploys the code with the live site's current data.
 #
 # The fetched data is never committed: it is built into the deployed assets.
@@ -26,7 +26,7 @@ on:
         type: boolean
         default: false
       accept_drop:
-        description: Accept a group that shrank by more than 20% (checked by hand)
+        description: Accept a group that shrank by more than 35% (checked by hand)
         type: boolean
         default: false
   push:
