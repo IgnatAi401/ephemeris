@@ -61,31 +61,30 @@ export function ObjectDescription({
       : null;
   if (!resolved) return null;
   const { profile, scope } = resolved;
-  const rows: [string, string][] = [
-    [
+  const rows: [string, string][] = [];
+  if (profile.affiliation)
+    rows.push([
       t('Country / affiliation', '国家／所属'),
-      profile.affiliation
-        ? pick(profile.affiliation)
-        : t('Not yet documented', '尚未补录'),
-    ],
-    ...(profile.operator
-      ? [
-          [t('Organisation', '机构'), pick(profile.operator)] as [
-            string,
-            string,
-          ],
-        ]
-      : []),
-    [
-      t('Launch date', '发射日期'),
-      profile.launch
-        ? `${profile.launch} UTC`
-        : t('Not yet documented', '尚未补录'),
-    ],
-  ];
-  if (!profile.launch && entry) {
-    const year = /^(\d{4})-\d{3}[A-Z]+$/i.exec(entry.cospar)?.[1];
-    if (year) rows.push([t('Designator year', '编号关联年份'), year]);
+      pick(profile.affiliation),
+    ]);
+  if (profile.operator)
+    rows.push([t('Organisation', '机构'), pick(profile.operator)]);
+  if (profile.launch)
+    rows.push([t('Launch date', '发射日期'), `${profile.launch} UTC`]);
+  // Without a verified date, the designator still names the launch: year,
+  // that year's launch number and a letter per catalogued piece.
+  const designator = entry
+    ? /^(\d{4})-(\d{3})([A-Z]+)$/i.exec(entry.cospar)
+    : null;
+  if (!profile.launch && designator) {
+    const [, year, number, piece] = designator;
+    rows.push([
+      t('Launch', '所属发射'),
+      t(
+        `Launch no. ${Number(number)} of ${year} · piece ${piece}`,
+        `${year} 年第 ${Number(number)} 次发射 · 物体 ${piece}`,
+      ),
+    ]);
   }
   if (profile.launchSite)
     rows.push([t('Launch site', '发射地点'), pick(profile.launchSite)]);
@@ -114,11 +113,11 @@ export function ObjectDescription({
           </div>
         ))}
       </dl>
-      {!profile.launch && entry && (
+      {!profile.launch && designator && profile.separated && (
         <p className="orbit-profile-note">
           {t(
-            'The designator year belongs to the associated launch; a released object or fragment may have separated later.',
-            '编号年份关联原发射事件；释放物或碎片可能在更晚的时间分离。',
+            'The designator identifies the launch that carried this object to orbit; a released object or fragment may have separated later.',
+            '国际编号对应把它送入轨道的那次发射；释放物或碎片可能在之后才分离。',
           )}
         </p>
       )}
