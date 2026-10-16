@@ -1,15 +1,15 @@
 {
-  "generated": "2026-10-16T08:18:26.585Z",
+  "generated": "2026-10-16T18:50:51.067Z",
   "constellations": {
     "source": "CelesTrak GP element sets (OMM), https://celestrak.org",
-    "fetched": "2026-10-15T19:13:03.678Z",
-    "total": 15268,
+    "fetched": "2026-10-16T18:50:15.776Z",
+    "total": 15267,
     "groups": {
       "starlink": {
-        "count": 11125,
+        "count": 11124,
         "celestrak": 11125,
         "duplicates": 0,
-        "dropped": 0,
+        "dropped": 1,
         "recent": 54
       },
       "iridium": {
@@ -41,8 +41,8 @@
         "recent": 1
       },
       "galileo": {
-        "count": 31,
-        "celestrak": 31,
+        "count": 30,
+        "celestrak": 30,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -66,7 +66,7 @@
         "celestrak": 256,
         "duplicates": 0,
         "dropped": 0,
-        "recent": 18
+        "recent": 0
       },
       "guowang": {
         "count": 224,
@@ -76,8 +76,8 @@
         "recent": 25
       },
       "geo": {
-        "count": 545,
-        "celestrak": 565,
+        "count": 546,
+        "celestrak": 566,
         "duplicates": 20,
         "dropped": 0,
         "recent": 0
@@ -105,8 +105,8 @@
       },
       "recent": {
         "count": 181,
-        "celestrak": 282,
-        "duplicates": 101,
+        "celestrak": 264,
+        "duplicates": 83,
         "dropped": 0,
         "recent": 181
       }
@@ -130,8 +130,8 @@
     "leapSeconds": "IERS Bulletin C 72 (2026-07-06)"
   },
   "files": {
-    "orbits.json": 1042280,
-    "catalog.json": 947873,
+    "orbits.json": 1041997,
+    "catalog.json": 948272,
     "spacecraft.json": 112776
   }
 }
