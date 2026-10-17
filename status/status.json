@@ -1,9 +1,9 @@
 {
-  "generated": "2026-10-16T18:50:51.067Z",
+  "generated": "2026-10-17T07:54:45.487Z",
   "constellations": {
     "source": "CelesTrak GP element sets (OMM), https://celestrak.org",
-    "fetched": "2026-10-16T18:50:15.776Z",
-    "total": 15267,
+    "fetched": "2026-10-17T07:52:33.926Z",
+    "total": 15273,
     "groups": {
       "starlink": {
         "count": 11124,
@@ -41,15 +41,15 @@
         "recent": 1
       },
       "galileo": {
-        "count": 30,
-        "celestrak": 30,
+        "count": 32,
+        "celestrak": 32,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
       },
       "beidou": {
-        "count": 53,
-        "celestrak": 53,
+        "count": 54,
+        "celestrak": 54,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -59,7 +59,7 @@
         "celestrak": 21,
         "duplicates": 0,
         "dropped": 0,
-        "recent": 3
+        "recent": 2
       },
       "qianfan": {
         "count": 256,
@@ -69,22 +69,22 @@
         "recent": 0
       },
       "guowang": {
-        "count": 224,
-        "celestrak": 224,
+        "count": 226,
+        "celestrak": 226,
         "duplicates": 0,
         "dropped": 0,
-        "recent": 25
+        "recent": 27
       },
       "geo": {
         "count": 546,
-        "celestrak": 566,
-        "duplicates": 20,
+        "celestrak": 567,
+        "duplicates": 21,
         "dropped": 0,
         "recent": 0
       },
       "debrisFy1c": {
-        "count": 1980,
-        "celestrak": 1980,
+        "count": 1981,
+        "celestrak": 1981,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -105,8 +105,8 @@
       },
       "recent": {
         "count": 181,
-        "celestrak": 264,
-        "duplicates": 83,
+        "celestrak": 265,
+        "duplicates": 84,
         "dropped": 0,
         "recent": 181
       }
@@ -130,8 +130,8 @@
     "leapSeconds": "IERS Bulletin C 72 (2026-07-06)"
   },
   "files": {
-    "orbits.json": 1041997,
-    "catalog.json": 948272,
+    "orbits.json": 1041330,
+    "catalog.json": 947934,
     "spacecraft.json": 112776
   }
 }
