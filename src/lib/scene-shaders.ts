@@ -289,10 +289,13 @@ void main() {
   return;
 #endif
   vec3 dir = viewRay(p);
-  vec3 background = sky(dir);
-  vec4 color = vec4(background, clamp(max(background.r, max(background.g, background.b)), 0.0, 1.0));
   vec4 planet = earth(dir);
   vec4 satellite = moonDisc(p, uMoon, uMoonLook.xy);
+  // An opaque foreground contributes no background light. Keep the original
+  // compositing order at the limb and through the translucent atmosphere.
+  vec3 background = vec3(0.0);
+  if (planet.a < 1.0 && satellite.a < 1.0) background = sky(dir);
+  vec4 color = vec4(background, clamp(max(background.r, max(background.g, background.b)), 0.0, 1.0));
   if (uMoonLook.z > 0.5) color = over(satellite, over(planet, color));
   else color = over(planet, over(satellite, color));
   color.rgb += (hash(gl_FragCoord.xy) - 0.5) / 255.0;

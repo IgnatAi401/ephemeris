@@ -1670,6 +1670,7 @@ export function OrbitView({
     if (!reducedMotion() && Math.abs(velocity) > tapeScale.current / 20)
       glide.current = { velocity, at: performance.now(), resume: state.resume };
     else setClock({ playing: state.resume });
+    invalidate.current();
   };
 
   const toggleLayer = (id: LayerId) =>
@@ -2101,7 +2102,9 @@ export function OrbitView({
         !opening.done ||
         turn.azimuth ||
         turn.elevation ||
-        wheelZoom.current !== null
+        wheelZoom.current !== null ||
+        glide.current !== null ||
+        now < tween.current.start + tween.current.duration
       )
         loop.invalidate();
 
@@ -2154,6 +2157,10 @@ export function OrbitView({
           font,
           nowLabel: text.current.now,
         });
+      // A paused replay has no wall-clock pulses. Once transitions settle,
+      // leave its canvases intact until an interaction invalidates the view.
+      // Live satellites retain their receiver rings and new-launch pulses.
+      sync();
     };
     const loop = createFrameLoop(
       paint,
@@ -2166,7 +2173,8 @@ export function OrbitView({
     const sync = () =>
       loop.update({
         visible: !document.hidden,
-        active: !reduced.matches,
+        active:
+          !reduced.matches && (!missionRef.current || clock.current.playing),
         fps: 60,
       });
     invalidate.current = () => loop.invalidate();

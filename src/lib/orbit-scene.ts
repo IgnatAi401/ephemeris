@@ -1288,11 +1288,10 @@ export function createOrbitScene(
               samples,
               base + k * 6,
             );
-            samples.copyWithin(
-              base + k * 6 + 3,
-              base + k * 6,
-              base + k * 6 + 3,
-            );
+            const at = base + k * 6;
+            samples[at + 3] = samples[at];
+            samples[at + 4] = samples[at + 1];
+            samples[at + 5] = samples[at + 2];
           }
           for (let k = 0; k < TRAIL_SAMPLES; k++) {
             const at = base + k * 6;

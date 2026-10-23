@@ -3,6 +3,10 @@
 
 export const TAPE_PX_PER_HOUR = 9;
 const HOUR = 3600000;
+const TICK_HEIGHT = [4, 8, 14];
+const TICK_COLOR = [0.18, 0.4, 0.62].map(
+  (alpha) => `rgba(223, 218, 245, ${alpha})`,
+);
 const pad = (value: number) => String(value).padStart(2, '0');
 
 export type TapeFrame = {
@@ -39,20 +43,33 @@ export function drawTape(context: CanvasRenderingContext2D, frame: TapeFrame) {
   context.textAlign = 'center';
   const nowX = x(now);
   const first = Math.ceil((time - center / scale) / HOUR) * HOUR;
-  for (let at = first; x(at) <= width + 1; at += HOUR) {
+  // Disjoint ticks share three styles. Batch their strokes instead of
+  // submitting a separate Canvas command for every hour on every frame.
+  for (let kind = 0; kind < 3; kind++) {
+    context.strokeStyle = TICK_COLOR[kind];
+    context.beginPath();
+    for (let at = first; x(at) <= width + 1; at += HOUR) {
+      if (at < min || at > max) continue;
+      const hour = (((at / HOUR) % 24) + 24) % 24;
+      if ((hour === 0 ? 2 : hour % 6 === 0 ? 1 : 0) !== kind) continue;
+      const tick = Math.round(x(at)) + 0.5;
+      context.moveTo(tick, base);
+      context.lineTo(tick, base - TICK_HEIGHT[kind]);
+    }
+    context.stroke();
+  }
+  for (
+    let at = Math.ceil(first / (6 * HOUR)) * 6 * HOUR;
+    x(at) <= width + 1;
+    at += 6 * HOUR
+  ) {
     if (at < min || at > max) continue;
     const date = new Date(at);
     const hour = date.getUTCHours();
     const day = hour === 0;
-    const quarter = hour % 6 === 0;
     const tick = Math.round(x(at)) + 0.5;
-    context.strokeStyle = `rgba(223, 218, 245, ${day ? 0.62 : quarter ? 0.4 : 0.18})`;
-    context.beginPath();
-    context.moveTo(tick, base);
-    context.lineTo(tick, base - (day ? 14 : quarter ? 8 : 4));
-    context.stroke();
     // Leave room for the "now" label.
-    if ((day || quarter) && Math.abs(tick - nowX) > 20) {
+    if (Math.abs(tick - nowX) > 20) {
       context.fillStyle = `rgba(223, 218, 245, ${day ? 0.8 : 0.38})`;
       context.fillText(
         day
