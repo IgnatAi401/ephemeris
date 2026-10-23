@@ -1,15 +1,15 @@
 {
-  "generated": "2026-10-23T08:38:00.709Z",
+  "generated": "2026-10-23T19:19:49.513Z",
   "constellations": {
     "source": "CelesTrak GP element sets (OMM), https://celestrak.org",
-    "fetched": "2026-10-22T08:42:12.423Z",
-    "total": 15263,
+    "fetched": "2026-10-23T19:19:08.870Z",
+    "total": 15257,
     "groups": {
       "starlink": {
-        "count": 11118,
-        "celestrak": 11121,
+        "count": 11115,
+        "celestrak": 11116,
         "duplicates": 0,
-        "dropped": 3,
+        "dropped": 1,
         "recent": 27
       },
       "iridium": {
@@ -34,8 +34,8 @@
         "recent": 0
       },
       "glonass": {
-        "count": 28,
-        "celestrak": 28,
+        "count": 27,
+        "celestrak": 27,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -48,8 +48,8 @@
         "recent": 0
       },
       "beidou": {
-        "count": 54,
-        "celestrak": 54,
+        "count": 53,
+        "celestrak": 53,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -76,15 +76,15 @@
         "recent": 18
       },
       "geo": {
-        "count": 547,
-        "celestrak": 568,
+        "count": 548,
+        "celestrak": 569,
         "duplicates": 21,
         "dropped": 0,
         "recent": 0
       },
       "debrisFy1c": {
-        "count": 1983,
-        "celestrak": 1983,
+        "count": 1980,
+        "celestrak": 1980,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -104,11 +104,11 @@
         "recent": 0
       },
       "recent": {
-        "count": 177,
-        "celestrak": 224,
+        "count": 178,
+        "celestrak": 225,
         "duplicates": 47,
         "dropped": 0,
-        "recent": 177
+        "recent": 178
       }
     }
   },
@@ -130,8 +130,8 @@
     "leapSeconds": "IERS Bulletin C 72 (2026-07-06)"
   },
   "files": {
-    "orbits.json": 1040328,
-    "catalog.json": 944139,
+    "orbits.json": 1037248,
+    "catalog.json": 943797,
     "spacecraft.json": 112776
   }
 }
