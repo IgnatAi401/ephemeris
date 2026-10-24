@@ -1,8 +1,8 @@
 {
-  "generated": "2026-10-24T08:13:43.857Z",
+  "generated": "2026-10-24T18:13:28.906Z",
   "constellations": {
     "source": "CelesTrak GP element sets (OMM), https://celestrak.org",
-    "fetched": "2026-10-24T08:13:10.345Z",
+    "fetched": "2026-10-24T18:12:52.523Z",
     "total": 15291,
     "groups": {
       "starlink": {
@@ -131,7 +131,7 @@
   },
   "files": {
     "orbits.json": 1043698,
-    "catalog.json": 950481,
+    "catalog.json": 949252,
     "spacecraft.json": 112776
   }
 }
