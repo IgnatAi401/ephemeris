@@ -16,7 +16,7 @@ A static site built with React, [ogl](https://github.com/oframe/ogl) (WebGL 2) a
 
 ## Run locally
 
-Requires Node.js 24 (see `.node-version`) and pnpm.
+Requires Node.js 26 (see `.node-version`) and pnpm.
 
 ```bash
 pnpm install --frozen-lockfile

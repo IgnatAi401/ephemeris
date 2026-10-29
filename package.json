@@ -5,7 +5,7 @@
   "description": "orbit.ignat.ai: a full-screen view of satellites, the Moon and Sun–Earth L1/L2 spacecraft.",
   "type": "module",
   "engines": {
-    "node": ">=24.21.0 <25",
+    "node": ">=26.13.0 <27",
     "pnpm": ">=12.3.4 <13"
   },
   "packageManager": "pnpm@12.3.4",
@@ -36,7 +36,7 @@
     "@tailwindcss/vite": "4.2.1",
     "@types/d3-geo": "3.1.0",
     "@types/geojson": "7946.0.16",
-    "@types/node": "22.19.19",
+    "@types/node": "26.6.5",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@types/topojson-client": "3.1.5",

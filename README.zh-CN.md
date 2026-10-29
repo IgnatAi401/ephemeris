@@ -16,7 +16,7 @@
 
 ## 本地运行
 
-需要 Node.js 24（见 `.node-version`）和 pnpm。
+需要 Node.js 26（见 `.node-version`）和 pnpm。
 
 ```bash
 pnpm install --frozen-lockfile
