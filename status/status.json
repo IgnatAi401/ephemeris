@@ -1,13 +1,13 @@
 {
-  "generated": "2026-11-04T21:22:17.338Z",
+  "generated": "2026-11-05T11:04:09.771Z",
   "constellations": {
     "source": "CelesTrak GP element sets (OMM), https://celestrak.org",
-    "fetched": "2026-11-04T21:21:27.510Z",
-    "total": 15268,
+    "fetched": "2026-11-05T11:03:32.992Z",
+    "total": 15294,
     "groups": {
       "starlink": {
-        "count": 11180,
-        "celestrak": 11181,
+        "count": 11207,
+        "celestrak": 11208,
         "duplicates": 0,
         "dropped": 1,
         "recent": 108
@@ -34,8 +34,8 @@
         "recent": 0
       },
       "glonass": {
-        "count": 26,
-        "celestrak": 26,
+        "count": 27,
+        "celestrak": 27,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -55,8 +55,8 @@
         "recent": 0
       },
       "stations": {
-        "count": 20,
-        "celestrak": 20,
+        "count": 19,
+        "celestrak": 19,
         "duplicates": 0,
         "dropped": 0,
         "recent": 1
@@ -83,8 +83,8 @@
         "recent": 0
       },
       "debrisFy1c": {
-        "count": 1977,
-        "celestrak": 1977,
+        "count": 1976,
+        "celestrak": 1976,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -130,8 +130,8 @@
     "leapSeconds": "IERS Bulletin C 72 (2026-07-06)"
   },
   "files": {
-    "orbits.json": 1034952,
-    "catalog.json": 940401,
+    "orbits.json": 1043895,
+    "catalog.json": 948405,
     "spacecraft.json": 112776
   }
 }
