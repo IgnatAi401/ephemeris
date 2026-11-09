@@ -1,15 +1,15 @@
 {
-  "generated": "2026-11-08T19:44:54.172Z",
+  "generated": "2026-11-09T11:42:38.444Z",
   "constellations": {
     "source": "CelesTrak GP element sets (OMM), https://celestrak.org",
-    "fetched": "2026-11-08T19:44:14.989Z",
-    "total": 15306,
+    "fetched": "2026-11-09T11:41:59.291Z",
+    "total": 15308,
     "groups": {
       "starlink": {
-        "count": 11202,
-        "celestrak": 11203,
+        "count": 11201,
+        "celestrak": 11201,
         "duplicates": 0,
-        "dropped": 1,
+        "dropped": 0,
         "recent": 108
       },
       "iridium": {
@@ -34,11 +34,11 @@
         "recent": 0
       },
       "glonass": {
-        "count": 27,
-        "celestrak": 27,
+        "count": 28,
+        "celestrak": 28,
         "duplicates": 0,
         "dropped": 0,
-        "recent": 0
+        "recent": 1
       },
       "galileo": {
         "count": 32,
@@ -73,7 +73,7 @@
         "celestrak": 235,
         "duplicates": 0,
         "dropped": 0,
-        "recent": 18
+        "recent": 9
       },
       "geo": {
         "count": 547,
@@ -83,8 +83,8 @@
         "recent": 0
       },
       "debrisFy1c": {
-        "count": 1977,
-        "celestrak": 1977,
+        "count": 1979,
+        "celestrak": 1979,
         "duplicates": 0,
         "dropped": 0,
         "recent": 0
@@ -105,8 +105,8 @@
       },
       "recent": {
         "count": 120,
-        "celestrak": 265,
-        "duplicates": 145,
+        "celestrak": 257,
+        "duplicates": 137,
         "dropped": 0,
         "recent": 120
       }
@@ -114,12 +114,10 @@
   },
   "spacecraft": {
     "source": "JPL Horizons, https://ssd.jpl.nasa.gov/horizons/",
-    "fetched": "2026-10-12T10:59:36.449Z",
-    "start": "2026-09-21T06:00:00.000Z",
-    "stop": "2026-11-11T06:00:00.000Z",
-    "stops": {
-      "soho": "2026-11-02T18:00:00.000Z"
-    },
+    "fetched": "2026-11-09T11:42:36.033Z",
+    "start": "2026-10-19T06:00:00.000Z",
+    "stop": "2026-12-09T06:00:00.000Z",
+    "stops": {},
     "tracks": [
       "soho",
       "jwst",
@@ -130,8 +128,8 @@
     "leapSeconds": "IERS Bulletin C 72 (2026-07-06)"
   },
   "files": {
-    "orbits.json": 1044859,
-    "catalog.json": 942748,
-    "spacecraft.json": 112776
+    "orbits.json": 1043453,
+    "catalog.json": 945248,
+    "spacecraft.json": 114869
   }
 }
